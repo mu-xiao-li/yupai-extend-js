@@ -4,6 +4,7 @@
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
+// @license      MIT
 // @grant        GM_addStyle
 // @grant        GM_notification
 // @grant        GM_registerMenuCommand
