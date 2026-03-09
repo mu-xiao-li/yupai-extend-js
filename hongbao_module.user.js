@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.3.6
+// @version      1.3.7
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -23,7 +23,7 @@
 (function() {
     'use strict';
 
-    const version = 'v1.3.6';
+    const version = 'v1.3.7';
 
     // 配置
     const CONFIG = {
@@ -429,7 +429,7 @@
                     }
                     //调用自动抢红包函数
                     setTimeout(() => {
-                        muliUnpackRedPacket(packetId, getRandomInt(0, 2))}
+                        muliUnpackRedPacket(packetId, getRandomInt(0, 2), redPacket)}
                         , CONFIG.autoUnpackRedPacketTime);
                     autoUnpackRedPacketList.add(packetId);
 
@@ -442,7 +442,10 @@
     }
 
     // 打开红包
-    function muliUnpackRedPacket(packetId, gesture) {
+    function muliUnpackRedPacket(packetId, gesture, redPacket) {
+        if (getRedPacketStatus(redPacket) == 'empty') {
+            return;
+        }
         $.ajax({
             url: Label.servePath + "/chat-room/red-packet/open",
             async: true,
