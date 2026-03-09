@@ -52,7 +52,7 @@
         autoUnpackRedPacket: false,
         // 红包自动抢延迟
         autoUnpackRedPacketTime: 5000,// 3000 ~ 10000 ms，强制最低3000ms
-        autoUnpackRedPacketText: '感谢🙏老板{user}的红包🧧，祝你永远不死！',// 3000 ~ 10000 ms，强制最低3000ms
+        autoUnpackRedPacketText: '感谢🙏老板{user}的红包🧧，祝老板永远不死！',// 3000 ~ 10000 ms，强制最低3000ms
     };
 
     // 单个红包高度
@@ -460,7 +460,7 @@
             }),
             success: function (result) {
                 if (result.code !== -1) {
-                    if (result.code == 0 && CONFIG.autoUnpackRedPacketText) {
+                    if (CONFIG.autoUnpackRedPacketText) {
                         sendMsg(CONFIG.autoUnpackRedPacketText.replace(/\{user\}/g, result.info.userName)
                             + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/15)');
                     }
