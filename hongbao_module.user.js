@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.3.5
+// @version      1.3.6
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -18,9 +18,12 @@
 // 2026-01-21 muli 修复报错问题，过滤红包可选择板块是否进行捕获
 // 2026-01-26 muli 遗弃了定时全量扫描机制，优化了脚本卡顿情况
 // 2026-01-27 muli 修复没有红包时，板块的提示显示不更新
+// 2026-03-09 muli 新增自动抢红包配置
 
 (function() {
     'use strict';
+
+    const version = 'v1.3.6';
 
     // 配置
     const CONFIG = {
@@ -38,10 +41,18 @@
         filterRedPacketTypes: ['猜拳红包'],  // 例如：['普通红包', '专属红包', '猜拳红包']
 
         // 是否启用红包类型过滤
-        enableRedPacketFilter: false,
+        enableRedPacketFilter: true,
         // 红包板块是否不显示过滤红包
         enableRedPacketModuleFilter: false,
+
         backgroundColor: '#ffffff',           // 红包板块背景颜色
+        // 自动抢的红包类型
+        autoUnpackRedPacketTypes: [],  // 例如：['普通红包', '专属红包', '猜拳红包']
+        // 是否启用红包自动抢功能
+        autoUnpackRedPacket: false,
+        // 红包自动抢延迟
+        autoUnpackRedPacketTime: 5000,// 3000 ~ 10000 ms，强制最低3000ms
+        autoUnpackRedPacketText: '感谢🙏老板{user}的红包🧧，祝你永远不死！',// 3000 ~ 10000 ms，强制最低3000ms
     };
 
     // 单个红包高度
@@ -51,6 +62,7 @@
     let redPackets = new Map();        // 红包ID -> 红包数据
     let displayOrder = [];             // 显示顺序（红包ID数组）
     let currentDisplayed = new Set();  // 当前显示的红包ID
+    let autoUnpackRedPacketList = new Set();  // 已自动抢了红包的id列表
     let observers = new Map();         // 观察器映射
     let isInitialized = false;
     let originalBreezeMoon = null;     // 原清风明月内容
@@ -402,7 +414,86 @@
 
             // 创建观察器来监听红包状态变化
             setupRedPacketObserver(packetData);
+
+            // 检查是否开启了自动抢红包
+            if (CONFIG.autoUnpackRedPacket && CONFIG.autoUnpackRedPacketTypes.length >
+                0 && packetData.status !== 'empty' && !autoUnpackRedPacketList.has(packetId)) {
+                // 获取红包类型
+                const redPacketType = getRedPacketType(redPacket);
+                if (CONFIG.autoUnpackRedPacketTypes.includes(redPacketType)) {
+                    if (!CONFIG.autoUnpackRedPacketTime || CONFIG.autoUnpackRedPacketTime < 3000) {
+                        CONFIG.autoUnpackRedPacketTime = 3000;
+                    }
+                    if (CONFIG.autoUnpackRedPacketTime > 10000) {
+                        CONFIG.autoUnpackRedPacketTime = 10000;
+                    }
+                    //调用自动抢红包函数
+                    setTimeout(() => {
+                        muliUnpackRedPacket(packetId, getRandomInt(0, 2))}
+                        , CONFIG.autoUnpackRedPacketTime);
+                    autoUnpackRedPacketList.add(packetId);
+
+
+                }
+            }
         }
+
+
+    }
+
+    // 打开红包
+    function muliUnpackRedPacket(packetId, gesture) {
+        $.ajax({
+            url: Label.servePath + "/chat-room/red-packet/open",
+            async: true,
+            method: "POST",
+            data: JSON.stringify({
+                oId: packetId,
+                gesture: gesture,
+                dice: {
+                    bet: $("#betRadio>input[name=bet]:checked").val(),
+                    chips: $("#betRadio>input[name=chips]").val()
+                }
+            }),
+            success: function (result) {
+                if (result.code !== -1) {
+                    if (result.code == 0 && CONFIG.autoUnpackRedPacketText) {
+                        sendMsg(CONFIG.autoUnpackRedPacketText.replace(/\{user\}/g, result.info.userName)
+                            + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/15)');
+                    }
+                } else {
+                    Util.alert(result.msg);
+                }
+            }
+                
+        });    
+    }
+
+    // 发送消息函数
+    function sendMsg(msg) {
+        if (Array.isArray(msg)) {
+            var list = [];
+            msg.forEach(param => {
+                sendMsg(param);
+            });
+            return list;
+        } else {
+            return new Promise((resolve, reject) => {
+                $.ajax({
+                    url: "/chat-room/send",
+                    type: "POST",
+                    data: JSON.stringify({ content: msg, client: 'Web/红包板块' + version }),
+                    success: resolve,
+                    error: reject
+                });
+            });
+        }
+
+    }
+
+    // 随机数
+    function getRandomInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
     // 获取红包类型
@@ -1766,7 +1857,12 @@
             console.log(`红包类型过滤已${enabled ? '启用' : '禁用'}`);
             this.rescan();
         },
-
+        // 新增：自动抢红包开关
+        toggleAutoUnpack: function(enabled) {
+            CONFIG.autoUnpackRedPacket = enabled;
+            console.log(`自动抢红包功能已${enabled ? '启用' : '禁用'}`);
+            this.rescan();
+        },
         // 新增：获取当前过滤的红包类型
         getFilterTypes: function() {
             return CONFIG.filterRedPacketTypes;
@@ -1924,6 +2020,60 @@
         </div>
         
         <div class="config-section" style="margin-bottom: 20px;">
+            <h4 style="margin: 0 0 10px 0; color: #333; font-size: 14px;">🤖 自动抢红包</h4>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; align-items: center; font-size: 13px;">
+                    <input type="checkbox" id="autoUnpackRedPacket" style="margin-right: 8px;">
+                    启用自动抢红包功能
+                </label>
+                <br>
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>自动抢红包延迟（3000~10000ms）:</span>
+                    <input type="number" id="autoUnpackRedPacketTime" min="3000" max="10000" 
+                           style="width: 80px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </label>
+                 
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>感谢语（{user}:用户名；）:</span>
+                </label>
+                <br>
+                <input type="text" id="autoUnpackRedPacketText" 
+                           style="width: 280px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 80px;">
+            </div>
+            <div style="margin-left: 20px; border-left: 2px solid #f0f0f0; padding-left: 15px;">
+                <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">自动抢以下红包类型:</p>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+                    <label style="display: flex; align-items: center; font-size: 12px;">
+                        <input type="checkbox" class="auto-unpack-redpacket-type" value="拼手气红包" style="margin-right: 6px;">
+                        拼手气红包
+                    </label>
+                    <label style="display: flex; align-items: center; font-size: 12px;">
+                        <input type="checkbox" class="auto-unpack-redpacket-type" value="普通红包" style="margin-right: 6px;">
+                        普通红包
+                    </label>
+                    <label style="display: flex; align-items: center; font-size: 12px;">
+                        <input type="checkbox" class="auto-unpack-redpacket-type" value="专属红包" style="margin-right: 6px;">
+                        专属红包
+                    </label>
+                    <label style="display: flex; align-items: center; font-size: 12px;">
+                        <input type="checkbox" class="auto-unpack-redpacket-type" value="心跳红包" style="margin-right: 6px;">
+                        心跳红包
+                    </label>
+                    <label style="display: flex; align-items: center; font-size: 12px;">
+                        <input type="checkbox" class="auto-unpack-redpacket-type" value="猜拳红包" style="margin-right: 6px;">
+                        猜拳红包
+                    </label>
+                    <label style="display: flex; align-items: center; font-size: 12px;">
+                        <input type="checkbox" class="auto-unpack-redpacket-type" value="石头剪刀布红包" style="margin-right: 6px;">
+                        石头剪刀布红包
+                    </label>
+                </div>
+            </div>
+        </div>
+        
+        <div class="config-section" style="margin-bottom: 20px;">
             <h4 style="margin: 0 0 10px 0; color: #333; font-size: 14px;">🎨 外观设置</h4>
             <!-- 新增背景颜色设置项 -->
             <div class="config-item" style="margin-bottom: 10px;">
@@ -2068,6 +2218,17 @@
             checkbox.checked = CONFIG.filterRedPacketTypes.includes(checkbox.value);
         });
 
+        // 自动抢红包
+        document.getElementById('autoUnpackRedPacket').checked = CONFIG.autoUnpackRedPacket;
+        document.getElementById('autoUnpackRedPacketTime').value = CONFIG.autoUnpackRedPacketTime;
+        document.getElementById('autoUnpackRedPacketText').value = CONFIG.autoUnpackRedPacketText;
+
+        // 自动抢红包-设置选中的红包类型
+        const autoUnpackTypeCheckboxes = document.querySelectorAll('.auto-unpack-redpacket-type');
+        autoUnpackTypeCheckboxes.forEach(checkbox => {
+            checkbox.checked = CONFIG.autoUnpackRedPacketTypes.includes(checkbox.value);
+        });
+
         // 外观设置
         document.getElementById('panelPosition').value = CONFIG.position;
         document.getElementById('backgroundColor').value = CONFIG.backgroundColor;
@@ -2092,6 +2253,15 @@
         CONFIG.filterRedPacketTypes = [];
         document.querySelectorAll('.redpacket-type:checked').forEach(checkbox => {
             CONFIG.filterRedPacketTypes.push(checkbox.value);
+        });
+
+        // 自动抢红包
+        CONFIG.autoUnpackRedPacket = document.getElementById('autoUnpackRedPacket').checked;
+        CONFIG.autoUnpackRedPacketTime = document.getElementById('autoUnpackRedPacketTime').value;
+        CONFIG.autoUnpackRedPacketText = document.getElementById('autoUnpackRedPacketText').value;
+        CONFIG.autoUnpackRedPacketTypes = [];
+        document.querySelectorAll('.auto-unpack-redpacket-type:checked').forEach(checkbox => {
+            CONFIG.autoUnpackRedPacketTypes.push(checkbox.value);
         });
 
         // 外观设置
@@ -2183,7 +2353,11 @@
                 enableRedPacketModuleFilter: CONFIG.enableRedPacketModuleFilter,
                 filterRedPacketTypes: CONFIG.filterRedPacketTypes,
                 position: CONFIG.position,
-                backgroundColor: CONFIG.backgroundColor
+                backgroundColor: CONFIG.backgroundColor,
+                autoUnpackRedPacket: CONFIG.autoUnpackRedPacket,
+                autoUnpackRedPacketTime: CONFIG.autoUnpackRedPacketTime,
+                autoUnpackRedPacketText: CONFIG.autoUnpackRedPacketText,
+                autoUnpackRedPacketTypes: CONFIG.autoUnpackRedPacketTypes
             };
 
             localStorage.setItem('redPacketConfig', JSON.stringify(configToSave));
