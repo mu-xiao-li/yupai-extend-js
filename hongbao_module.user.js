@@ -55,6 +55,7 @@
         autoUnpackRedPacketTime: 5000,// 3000 ~ 10000 ms，强制最低3000ms
         autoUnpackRedPacketText: '感谢🙏老板{user}的红包🧧，祝老板永远不死！',// 3000 ~ 10000 ms，强制最低3000ms
         enableAutoUnpackRedPacketText: false, // 感谢文案开关
+        autoUnpackRedPacketTextMoney: 50,// 触发感谢的金额数
     };
 
     // 单个红包高度
@@ -469,6 +470,13 @@
             }),
             success: function (result) {
                 if (result.code !== -1) {
+                    // 如果是专属红包，且专属红包没有自己，则不感谢
+                    if (result.info && result.info.got == 0) {
+                        const selfRecord = findSelfRecord(result.recivers);
+                        if (!selfRecord) {
+                            return;
+                        }
+                    }
                     if (CONFIG.autoUnpackRedPacketText && CONFIG.enableAutoUnpackRedPacketText) {
                         const selfRecord = findSelfRecord(result.who);
 
@@ -476,6 +484,10 @@
                         let userMoney = "";
                         if (selfRecord) {
                             userMoney = selfRecord.userMoney;
+                        }
+                        // 超过这个金额上限再发送感谢
+                        if (!userMoney || ((userMoney && userMoney != "") && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
+                            return;
                         }
                         let num = "";
                         if (result.who && result.who.length > 0) {
@@ -2094,7 +2106,9 @@
                     <input type="checkbox" id="autoUnpackRedPacket" style="margin-right: 8px;">
                     启用自动抢红包功能
                 </label>
-                <br>
+                
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
                 <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
                     <span>自动抢红包延迟（3000~10000ms）:</span>
                     <input type="number" id="autoUnpackRedPacketTime" min="3000" max="10000" 
@@ -2106,6 +2120,14 @@
                 <label style="display: flex; align-items: center; font-size: 13px;">
                     <input type="checkbox" id="enableAutoUnpackRedPacketText" style="margin-right: 8px;">
                     启用感谢文案
+                </label>
+                 
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>抢到多少积分时发送感谢:</span>
+                    <input type="number" id="autoUnpackRedPacketTextMoney" min="0" 
+                           style="width: 80px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;">
                 </label>
                  
             </div>
@@ -2307,6 +2329,7 @@
         document.getElementById('autoUnpackRedPacket').checked = CONFIG.autoUnpackRedPacket;
         document.getElementById('enableAutoUnpackRedPacketText').checked = CONFIG.enableAutoUnpackRedPacketText;
         document.getElementById('autoUnpackRedPacketTime').value = CONFIG.autoUnpackRedPacketTime;
+        document.getElementById('autoUnpackRedPacketTextMoney').value = CONFIG.autoUnpackRedPacketTextMoney;
         document.getElementById('autoUnpackRedPacketText').value = CONFIG.autoUnpackRedPacketText;
 
         // 自动抢红包-设置选中的红包类型
@@ -2346,6 +2369,7 @@
         CONFIG.enableAutoUnpackRedPacketText = document.getElementById('enableAutoUnpackRedPacketText').checked;
         CONFIG.autoUnpackRedPacketTime = document.getElementById('autoUnpackRedPacketTime').value;
         CONFIG.autoUnpackRedPacketText = document.getElementById('autoUnpackRedPacketText').value;
+        CONFIG.autoUnpackRedPacketTextMoney = document.getElementById('autoUnpackRedPacketTextMoney').value;
         CONFIG.autoUnpackRedPacketTypes = [];
         document.querySelectorAll('.auto-unpack-redpacket-type:checked').forEach(checkbox => {
             CONFIG.autoUnpackRedPacketTypes.push(checkbox.value);
@@ -2444,6 +2468,7 @@
                 autoUnpackRedPacket: CONFIG.autoUnpackRedPacket,
                 autoUnpackRedPacketTime: CONFIG.autoUnpackRedPacketTime,
                 autoUnpackRedPacketText: CONFIG.autoUnpackRedPacketText,
+                autoUnpackRedPacketTextMoney: CONFIG.autoUnpackRedPacketTextMoney,
                 enableAutoUnpackRedPacketText: CONFIG.enableAutoUnpackRedPacketText,
                 autoUnpackRedPacketTypes: CONFIG.autoUnpackRedPacketTypes
             };
