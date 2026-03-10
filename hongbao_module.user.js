@@ -498,7 +498,7 @@
                                 .replace(/\{count\}/g, result.info.count)
                                 .replace(/\{num\}/g, num)
                                 .replace(/\{money\}/g, userMoney)
-                                .replace(/\{type\}/g, redPacketType)
+                                .replace(/\{type\}/g, redPacketType.replace(/红包/g, ''))
                             + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/15)');
                     }
                 } else {
