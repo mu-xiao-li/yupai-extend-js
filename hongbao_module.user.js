@@ -53,7 +53,7 @@
         autoUnpackRedPacket: false,
         // 红包自动抢延迟
         autoUnpackRedPacketTime: 5000,// 3000 ~ 10000 ms，强制最低3000ms
-        autoUnpackRedPacketText: '感谢🙏老板{user}的红包🧧，祝老板永远不死！',// 3000 ~ 10000 ms，强制最低3000ms
+        autoUnpackRedPacketText: '🙏感谢{user}老板的{count}个{type}红包🧧\n💰我在第【{num}】位抢到了【{money}】💰\n### 🎉祝老板永远不死！天天开心！🎉',// 感谢文案
         enableAutoUnpackRedPacketText: false, // 感谢文案开关
         autoUnpackRedPacketTextMoney: 50,// 触发感谢的金额数
     };
@@ -439,7 +439,7 @@
                     }
                     //调用自动抢红包函数
                     setTimeout(() => {
-                        muliUnpackRedPacket(packetId, getRandomInt(0, 2), redPacket)}
+                        muliUnpackRedPacket(packetId, getRandomInt(0, 2), redPacket, redPacketType)}
                         , CONFIG.autoUnpackRedPacketTime - 500 );
                     autoUnpackRedPacketList.add(packetId);
 
@@ -452,7 +452,7 @@
     }
 
     // 打开红包
-    function muliUnpackRedPacket(packetId, gesture, redPacket) {
+    function muliUnpackRedPacket(packetId, gesture, redPacket, redPacketType) {
         if (getRedPacketStatus(redPacket) == 'empty') {
             return;
         }
@@ -498,6 +498,7 @@
                                 .replace(/\{count\}/g, result.info.count)
                                 .replace(/\{num\}/g, num)
                                 .replace(/\{money\}/g, userMoney)
+                                .replace(/\{type\}/g, redPacketType)
                             + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/15)');
                     }
                 } else {
@@ -2144,10 +2145,12 @@
                     <span>{num}：目前已有多少人抢红包；</span>
                     <br>
                     <span>{money}：抢到红包的金额数；</span>
+                    <br>
+                    <span>{type}：红包类型；</span>
                 </label>
                 <br>
-                <input type="text" id="autoUnpackRedPacketText" 
-                           style="width: 280px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 80px;">
+                <textarea type="text" id="autoUnpackRedPacketText" 
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 80px;"></textarea>
             </div>
             <div style="margin-left: 20px; border-left: 2px solid #f0f0f0; padding-left: 15px;">
                 <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">自动抢以下红包类型:</p>
