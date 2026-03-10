@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.3.7
+// @version      1.3.8
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -19,11 +19,12 @@
 // 2026-01-26 muli 遗弃了定时全量扫描机制，优化了脚本卡顿情况
 // 2026-01-27 muli 修复没有红包时，板块的提示显示不更新
 // 2026-03-09 muli 新增自动抢红包配置
+// 2026-03-10 muli 新增了一些红包感谢语的关键字，新增了红包感谢语的开关配置
 
 (function() {
     'use strict';
 
-    const version = 'v1.3.7';
+    const version = 'v1.3.8';
 
     // 配置
     const CONFIG = {
@@ -53,6 +54,7 @@
         // 红包自动抢延迟
         autoUnpackRedPacketTime: 5000,// 3000 ~ 10000 ms，强制最低3000ms
         autoUnpackRedPacketText: '感谢🙏老板{user}的红包🧧，祝老板永远不死！',// 3000 ~ 10000 ms，强制最低3000ms
+        enableAutoUnpackRedPacketText: false, // 感谢文案开关
     };
 
     // 单个红包高度
@@ -80,6 +82,13 @@
     // 浮窗状态存储
     let isFloatingWindow = false;
     let floatingWindowData = null;
+
+    // 我的用户昵称
+    const currentUserName = extractInlineScriptValue(/Label\.currentUser\s*=\s*'([^']*)'/)
+        || extractInlineScriptValue(/currentUserName\s*:\s*'([^']*)'/);
+
+    // 我的用户id
+    const currentUserId = extractInlineScriptValue(/Label\.currentUserId\s*=\s*'([^']*)'/);
 
     // 主初始化函数
     function init() {
@@ -430,7 +439,7 @@
                     //调用自动抢红包函数
                     setTimeout(() => {
                         muliUnpackRedPacket(packetId, getRandomInt(0, 2), redPacket)}
-                        , CONFIG.autoUnpackRedPacketTime);
+                        , CONFIG.autoUnpackRedPacketTime - 500 );
                     autoUnpackRedPacketList.add(packetId);
 
 
@@ -460,8 +469,23 @@
             }),
             success: function (result) {
                 if (result.code !== -1) {
-                    if (CONFIG.autoUnpackRedPacketText) {
-                        sendMsg(CONFIG.autoUnpackRedPacketText.replace(/\{user\}/g, result.info.userName)
+                    if (CONFIG.autoUnpackRedPacketText && CONFIG.enableAutoUnpackRedPacketText) {
+                        const selfRecord = findSelfRecord(result.who);
+
+                        // 获取到的红包金额
+                        let userMoney = "";
+                        if (selfRecord) {
+                            userMoney = selfRecord.userMoney;
+                        }
+                        let num = "";
+                        if (result.who && result.who.length > 0) {
+                            num = result.who.length;
+                        }
+                        sendMsg(CONFIG.autoUnpackRedPacketText
+                                .replace(/\{user\}/g, result.info.userName)
+                                .replace(/\{count\}/g, result.info.count)
+                                .replace(/\{num\}/g, num)
+                                .replace(/\{money\}/g, userMoney)
                             + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/15)');
                     }
                 } else {
@@ -470,6 +494,47 @@
             }
                 
         });    
+    }
+
+    function decodeInlineString(value) {
+        return String(value || '')
+            .replace(/\\\\/g, '\\')
+            .replace(/\\'/g, '\'')
+            .replace(/\\"/g, '"');
+    }
+
+    // 筛选当前页面的部分内容
+    function extractInlineScriptValue(pattern) {
+        const scripts = document.scripts || [];
+        for (const script of scripts) {
+            if (script.src) {
+                continue;
+            }
+            const match = (script.textContent || '').match(pattern);
+            if (match && match[1] !== undefined) {
+                return decodeInlineString(match[1]);
+            }
+        }
+        return null;
+    }
+
+    // 解析红包列表并获取指定用户的红包记录
+    function findSelfRecord(whoList, thisUser) {
+        if (!Array.isArray(whoList)) {
+            return null;
+        }
+        return whoList.find((item) => {
+            const userId = String(item.userId || '');
+            const userName = String(item.userName || '');
+            if (thisUser) {
+                return (userId === thisUser)
+                    || (userName === thisUser);
+            } else {
+                return (currentUserId && userId === currentUserId)
+                    || (currentUserName && userName === currentUserName);
+            }
+
+        }) || null;
     }
 
     // 发送消息函数
@@ -2038,8 +2103,25 @@
                  
             </div>
             <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; align-items: center; font-size: 13px;">
+                    <input type="checkbox" id="enableAutoUnpackRedPacketText" style="margin-right: 8px;">
+                    启用感谢文案
+                </label>
+                 
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
                 <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
-                    <span>感谢语（{user}:用户名；）:</span>
+                    <span>感谢语:</span>
+                </label>
+                <br>
+                <label style="align-items: center; font-size: 12px;">
+                    <span>{user}：用户名；</span>
+                    <br>
+                    <span>{count}：红包个数；</span>
+                    <br>
+                    <span>{num}：目前已有多少人抢红包；</span>
+                    <br>
+                    <span>{money}：抢到红包的金额数；</span>
                 </label>
                 <br>
                 <input type="text" id="autoUnpackRedPacketText" 
@@ -2223,6 +2305,7 @@
 
         // 自动抢红包
         document.getElementById('autoUnpackRedPacket').checked = CONFIG.autoUnpackRedPacket;
+        document.getElementById('enableAutoUnpackRedPacketText').checked = CONFIG.enableAutoUnpackRedPacketText;
         document.getElementById('autoUnpackRedPacketTime').value = CONFIG.autoUnpackRedPacketTime;
         document.getElementById('autoUnpackRedPacketText').value = CONFIG.autoUnpackRedPacketText;
 
@@ -2260,6 +2343,7 @@
 
         // 自动抢红包
         CONFIG.autoUnpackRedPacket = document.getElementById('autoUnpackRedPacket').checked;
+        CONFIG.enableAutoUnpackRedPacketText = document.getElementById('enableAutoUnpackRedPacketText').checked;
         CONFIG.autoUnpackRedPacketTime = document.getElementById('autoUnpackRedPacketTime').value;
         CONFIG.autoUnpackRedPacketText = document.getElementById('autoUnpackRedPacketText').value;
         CONFIG.autoUnpackRedPacketTypes = [];
@@ -2360,6 +2444,7 @@
                 autoUnpackRedPacket: CONFIG.autoUnpackRedPacket,
                 autoUnpackRedPacketTime: CONFIG.autoUnpackRedPacketTime,
                 autoUnpackRedPacketText: CONFIG.autoUnpackRedPacketText,
+                enableAutoUnpackRedPacketText: CONFIG.enableAutoUnpackRedPacketText,
                 autoUnpackRedPacketTypes: CONFIG.autoUnpackRedPacketTypes
             };
 
