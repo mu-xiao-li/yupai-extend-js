@@ -497,6 +497,9 @@
                             } else if (userMoney == '0' && '心跳红包' != redPacketType) {
                                 msg = "🤪搞笑的**{user}**！😄\n### 👎交税！！！你滴积分免费咯 ~~~🤪";
                             }
+                            if (!selfRecord) {
+                                return;
+                            }
                         } else {
                             // 超过这个金额上限再发送感谢
                             if (!userMoney || ((userMoney && userMoney != "") && userMoney >= 0 && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
