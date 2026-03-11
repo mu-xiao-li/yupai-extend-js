@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.3.8
+// @version      1.3.9
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -20,11 +20,12 @@
 // 2026-01-27 muli 修复没有红包时，板块的提示显示不更新
 // 2026-03-09 muli 新增自动抢红包配置
 // 2026-03-10 muli 新增了一些红包感谢语的关键字，新增了红包感谢语的开关配置
+// 2026-03-11 muli 新增自动抢红包，求饶彩蛋
 
 (function() {
     'use strict';
 
-    const version = 'v1.3.8';
+    const version = 'v1.3.9';
 
     // 配置
     const CONFIG = {
@@ -486,14 +487,20 @@
                             userMoney = selfRecord.userMoney;
                         }
                         // 超过这个金额上限再发送感谢
-                        if (!userMoney || ((userMoney && userMoney != "") && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
+                        if (!userMoney || ((userMoney && userMoney != "") && userMoney >= 0 && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
                             return;
                         }
                         let num = "";
                         if (result.who && result.who.length > 0) {
                             num = result.who.length;
                         }
-                        sendMsg(CONFIG.autoUnpackRedPacketText
+                        let msg = CONFIG.autoUnpackRedPacketText;
+                        // 如果抢到的积分是负数，触发求饶
+                        if (userMoney && userMoney < 0) {
+                            userMoney  = 0 - userMoney;
+                            msg = "😱天杀的**{user}**！我不要你的**{type}**红包了！😱\n💰还我的**{money}**血汗积分💰\n## 🧎‍♀️🧎‍🧎‍我再也不赌了😭😭😭！！！";
+                        }
+                        sendMsg(msg
                                 .replace(/\{user\}/g, result.info.userName)
                                 .replace(/\{count\}/g, result.info.count)
                                 .replace(/\{num\}/g, num)
