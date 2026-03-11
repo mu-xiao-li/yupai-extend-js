@@ -499,6 +499,10 @@
                         if (userMoney && userMoney < 0) {
                             userMoney  = 0 - userMoney;
                             msg = "😱天杀的**{user}**！我不要你的**{type}**红包了！😱\n💰还我的**{money}**血汗积分💰\n## 🧎‍♀️🧎‍🧎‍我再也不赌了😭😭😭！！！";
+                        } else if ('猜拳红包' == redPacketType || '石头剪刀布红包' == redPacketType) {
+                            if (userMoney && userMoney == 0) {
+                                msg = "🤪搞笑的**{user}**！😄\n### 👎交税！！！你滴积分免费咯 ~~~🤪";
+                            }
                         }
                         sendMsg(msg
                                 .replace(/\{user\}/g, result.info.userName)
