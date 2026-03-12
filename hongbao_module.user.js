@@ -498,26 +498,30 @@
                             // 如果抢到的积分是负数，触发求饶
                             if (userMoney && userMoney < 0) {
                                 userMoney = 0 - userMoney;
-                                msg = autoUnpackRedPacketLoseText;
+                                msg = CONFIG.autoUnpackRedPacketLoseText;
                             } else if (userMoney == '0' && '心跳红包' != redPacketType) {
                                 // 猜拳平手
-                                msg = autoUnpackRedPacketMoraZeroText;
+                                msg = CONFIG.autoUnpackRedPacketMoraZeroText;
                             } else if (userMoney > 0 && '心跳红包' != redPacketType) {
                                 // 猜拳胜利
-                                msg = autoUnpackRedPacketMoraText;
+                                msg = CONFIG.autoUnpackRedPacketMoraText;
                             }
                             if (!selfRecord) {
                                 return;
                             }
                         } else if ('专属红包' == redPacketType && selfRecord && userMoney && userMoney > 0) {
-                            msg = autoUnpackRedPacketExclusiveText;
+                            msg = CONFIG.autoUnpackRedPacketExclusiveText;
                         } else {
                             // 超过这个金额上限再发送感谢
                             if (!userMoney || ((userMoney && userMoney != "") && userMoney >= 0 && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
                                 return;
                             }
                         }
-
+                        
+                        if (!msg || msg == '') {
+                            msg = CONFIG.autoUnpackRedPacketText;
+                        }
+ 
                         let num = "";
                         if (result.who && result.who.length > 0) {
                             num = result.who.length;
