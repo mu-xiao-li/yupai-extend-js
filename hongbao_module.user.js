@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.3.9
+// @version      1.4.0
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -21,11 +21,12 @@
 // 2026-03-09 muli 新增自动抢红包配置
 // 2026-03-10 muli 新增了一些红包感谢语的关键字，新增了红包感谢语的开关配置
 // 2026-03-11 muli 新增自动抢红包，求饶彩蛋
+// 2026-3-12 muli 彩蛋文案可配置
 
 (function() {
     'use strict';
 
-    const version = 'v1.3.9';
+    const version = 'v1.4.0';
 
     // 配置
     const CONFIG = {
@@ -54,9 +55,13 @@
         autoUnpackRedPacket: false,
         // 红包自动抢延迟
         autoUnpackRedPacketTime: 5000,// 3000 ~ 10000 ms，强制最低3000ms
-        autoUnpackRedPacketText: '🙏感谢{user}老板的{count}个{type}红包🧧\n💰我在第【{num}】位抢到了【{money}】💰\n### 🎉祝老板永远不死！天天开心！🎉',// 感谢文案
+        autoUnpackRedPacketText: '🙏感谢**{user}**老板的**{count}**个**{type}**红包🧧\n💰我在第【{num}】位抢到了【{money}】💰\n### 🎉祝老板永远不死！天天开心！🎉',// 感谢文案
         enableAutoUnpackRedPacketText: false, // 感谢文案开关
         autoUnpackRedPacketTextMoney: 50,// 触发感谢的金额数
+        autoUnpackRedPacketLoseText: "😱天杀的**{user}**！我不要你的**{type}**红包了！😱\n💰还我的**{money}**血汗积分💰\n## 🧎‍♀️🧎‍🧎‍我再也不赌了😭😭😭！！！",// 抢红包负分文案
+        autoUnpackRedPacketMoraZeroText: "🤪搞笑的**{user}**！😄\n### 👎交税！！！你滴积分免费咯 ~~~🤪",// 抢猜拳红包0分文案
+        autoUnpackRedPacketMoraText: "🙏感谢**{user}**老板的公益慈善！😄\n💰你的**{money}**积分，咱就笑纳啦~\n### 😎不要在被窝里哭鼻子哦~🤪",// 抢猜拳胜利文案
+        autoUnpackRedPacketExclusiveText: "🙏感谢**{user}**宝宝的**{type}**红包！🧧\n🤩🤩🤩居然有**{money}**积分！！！\n### 💗爱你哦😘~",// 专属红包文案
     };
 
     // 单个红包高度
@@ -493,13 +498,19 @@
                             // 如果抢到的积分是负数，触发求饶
                             if (userMoney && userMoney < 0) {
                                 userMoney = 0 - userMoney;
-                                msg = "😱天杀的**{user}**！我不要你的**{type}**红包了！😱\n💰还我的**{money}**血汗积分💰\n## 🧎‍♀️🧎‍🧎‍我再也不赌了😭😭😭！！！";
+                                msg = autoUnpackRedPacketLoseText;
                             } else if (userMoney == '0' && '心跳红包' != redPacketType) {
-                                msg = "🤪搞笑的**{user}**！😄\n### 👎交税！！！你滴积分免费咯 ~~~🤪";
+                                // 猜拳平手
+                                msg = autoUnpackRedPacketMoraZeroText;
+                            } else if (userMoney > 0 && '心跳红包' != redPacketType) {
+                                // 猜拳胜利
+                                msg = autoUnpackRedPacketMoraText;
                             }
                             if (!selfRecord) {
                                 return;
                             }
+                        } else if ('专属红包' == redPacketType && selfRecord && userMoney && userMoney > 0) {
+                            msg = autoUnpackRedPacketExclusiveText;
                         } else {
                             // 超过这个金额上限再发送感谢
                             if (!userMoney || ((userMoney && userMoney != "") && userMoney >= 0 && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
@@ -2154,7 +2165,7 @@
             </div>
             <div class="config-item" style="margin-bottom: 8px;">
                 <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
-                    <span>感谢语:</span>
+                    <span>🪣通用感谢语:</span>
                 </label>
                 <br>
                 <label style="align-items: center; font-size: 12px;">
@@ -2170,7 +2181,39 @@
                 </label>
                 <br>
                 <textarea type="text" id="autoUnpackRedPacketText" 
-                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 80px;"></textarea>
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>🧎‍♀️负分忏悔感谢语:</span>
+                </label>
+                <br>
+                <textarea type="text" id="autoUnpackRedPacketLoseText" 
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>⚖️猜拳平手感谢语:</span>
+                </label>
+                <br>
+                <textarea type="text" id="autoUnpackRedPacketMoraZeroText" 
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>✌️猜拳胜利感谢语:</span>
+                </label>
+                <br>
+                <textarea type="text" id="autoUnpackRedPacketMoraText" 
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>💗专属红包感谢语:</span>
+                </label>
+                <br>
+                <textarea type="text" id="autoUnpackRedPacketExclusiveText" 
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
             </div>
             <div style="margin-left: 20px; border-left: 2px solid #f0f0f0; padding-left: 15px;">
                 <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">自动抢以下红包类型:</p>
@@ -2354,6 +2397,10 @@
         document.getElementById('autoUnpackRedPacketTime').value = CONFIG.autoUnpackRedPacketTime;
         document.getElementById('autoUnpackRedPacketTextMoney').value = CONFIG.autoUnpackRedPacketTextMoney;
         document.getElementById('autoUnpackRedPacketText').value = CONFIG.autoUnpackRedPacketText;
+        document.getElementById('autoUnpackRedPacketLoseText').value = CONFIG.autoUnpackRedPacketLoseText;
+        document.getElementById('autoUnpackRedPacketMoraZeroText').value = CONFIG.autoUnpackRedPacketMoraZeroText;
+        document.getElementById('autoUnpackRedPacketMoraText').value = CONFIG.autoUnpackRedPacketMoraText;
+        document.getElementById('autoUnpackRedPacketExclusiveText').value = CONFIG.autoUnpackRedPacketExclusiveText;
 
         // 自动抢红包-设置选中的红包类型
         const autoUnpackTypeCheckboxes = document.querySelectorAll('.auto-unpack-redpacket-type');
@@ -2392,6 +2439,10 @@
         CONFIG.enableAutoUnpackRedPacketText = document.getElementById('enableAutoUnpackRedPacketText').checked;
         CONFIG.autoUnpackRedPacketTime = document.getElementById('autoUnpackRedPacketTime').value;
         CONFIG.autoUnpackRedPacketText = document.getElementById('autoUnpackRedPacketText').value;
+        CONFIG.autoUnpackRedPacketLoseText = document.getElementById('autoUnpackRedPacketLoseText').value;
+        CONFIG.autoUnpackRedPacketMoraZeroText = document.getElementById('autoUnpackRedPacketMoraZeroText').value;
+        CONFIG.autoUnpackRedPacketMoraText = document.getElementById('autoUnpackRedPacketMoraText').value;
+        CONFIG.autoUnpackRedPacketExclusiveText = document.getElementById('autoUnpackRedPacketExclusiveText').value;
         CONFIG.autoUnpackRedPacketTextMoney = document.getElementById('autoUnpackRedPacketTextMoney').value;
         CONFIG.autoUnpackRedPacketTypes = [];
         document.querySelectorAll('.auto-unpack-redpacket-type:checked').forEach(checkbox => {
@@ -2491,6 +2542,10 @@
                 autoUnpackRedPacket: CONFIG.autoUnpackRedPacket,
                 autoUnpackRedPacketTime: CONFIG.autoUnpackRedPacketTime,
                 autoUnpackRedPacketText: CONFIG.autoUnpackRedPacketText,
+                autoUnpackRedPacketLoseText: CONFIG.autoUnpackRedPacketLoseText,
+                autoUnpackRedPacketMoraZeroText: CONFIG.autoUnpackRedPacketMoraZeroText,
+                autoUnpackRedPacketMoraText: CONFIG.autoUnpackRedPacketMoraText,
+                autoUnpackRedPacketExclusiveText: CONFIG.autoUnpackRedPacketExclusiveText,
                 autoUnpackRedPacketTextMoney: CONFIG.autoUnpackRedPacketTextMoney,
                 enableAutoUnpackRedPacketText: CONFIG.enableAutoUnpackRedPacketText,
                 autoUnpackRedPacketTypes: CONFIG.autoUnpackRedPacketTypes
