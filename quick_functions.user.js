@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.5.8
+// @version      2.5.9
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -42,7 +42,8 @@
 // 2026-01-28 muli 修复单独话题无法引用的问题（其他单独附带样式的元素）
 // 2026-01-29 muli 分配表情包分组新增检查该分组是否已存在该表情包，修复去小尾巴误伤的问题，修复原始引用首行没有换行符的问题，修复无表情包加载递归问题
 // 2026-02-02 muli 跟进鱼排最新版表情包分组功能，并新增一键分配和一键发送功能
-// 2026-03-06 muli 快捷发送消息，快捷键进行调整，单独回车或者ALT + Enter都会快捷发送，shift + Enter为正常换行键
+// 2026-03-06 muli 快捷发送消息，快捷键进行调整，单独回车或者ALT + Enter、Ctrl + Enter都会快捷发送，shift + Enter为正常换行键
+// 2026-03-13 muli 修复小尾巴开关在部分场景下，开关状态获取与实际不符的问题
 
 (function () {
     'use strict';
@@ -64,10 +65,10 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.5.8";
+    const version_us = "v2.5.9";
 
     // 小尾巴开关状态
-    var suffixFlag = window.localStorage['xwb_flag'] ? JSON.parse(window.localStorage['xwb_flag']) : true;
+    var suffixFlag = window.localStorage['xwb_flag'] != null ? JSON.parse(window.localStorage['xwb_flag']) : false;
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -263,7 +264,8 @@
 
         // 设置当前选中的预设
         const currentIndex = getCurrentSuffixIndex();
-        const isCustom = window.localStorage['xwb_is_custom_suffix'] === 'true';
+        const isCustom = window.localStorage['xwb_is_custom_suffix'] === 'true' ||
+            window.localStorage['xwb_is_custom_suffix'] === true;
         if (!isCustom) {
             presetSelect.value = currentIndex;
         }
@@ -1438,6 +1440,9 @@
                 // event.preventDefault();
                 // sendButton.click();
             } else if (event.key === 'Enter' && event.altKey) {
+                event.preventDefault();
+                sendButton.click();
+            } else if (event.key === 'Enter' && event.ctrlKey) {
                 event.preventDefault();
                 sendButton.click();
             } else if (event.key === 'Enter') {
@@ -4832,7 +4837,8 @@
     // 获取当前小尾巴文本
     function getCurrentSuffixText() {
         // 优先检查是否有自定义小尾巴
-        const isCustom = window.localStorage['xwb_is_custom_suffix'] === 'true';
+        const isCustom = window.localStorage['xwb_is_custom_suffix'] === 'true' 
+            || window.localStorage['xwb_is_custom_suffix'] === true;
         const customSuffix = window.localStorage['xwb_custom_suffix'];
 
         // 如果设置了自定义小尾巴且不为空，则返回自定义文本
