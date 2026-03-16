@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.4.0
+// @version      1.4.1
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -22,11 +22,68 @@
 // 2026-03-10 muli 新增了一些红包感谢语的关键字，新增了红包感谢语的开关配置
 // 2026-03-11 muli 新增自动抢红包，求饶彩蛋
 // 2026-3-12 muli 彩蛋文案可配置
+// 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地
 
 (function() {
     'use strict';
 
-    const version = 'v1.4.0';
+    const version = 'v1.4.1';
+
+    // 存储中心 -- 存储和获取时 都是string 需要手动还原对象类型
+    // 所有数据 优先级都是先从云端获取
+    const muliSpecialStorage = {
+        // 保存数据
+        setItem: function (key, data) {
+            if (typeof data === 'object') {
+                data = JSON.stringify(data);
+            }
+            if (cloudStorage) {
+                cloudStorage.setItem(key, data);
+            }
+            localStorage.setItem(key, data);
+        },
+        // 获取缓存的数据
+        getItem: function (key, defaultData) {
+            console.warn("存储中心测试")
+            if (typeof defaultData === 'object') {
+                defaultData = JSON.stringify(defaultData);
+            }
+            let data = null;
+            // 先从云端获取
+            if (cloudStorage) {
+                data = cloudStorage.getItem(key, defaultData);
+                if (data && typeof data === 'object') {
+                    data = JSON.stringify(data);
+                }
+            }
+            if (!data || data == null || data == '' || data == {} || data == '{}' || data == 'undefined') {
+                data = localStorage.getItem(key);
+                // 本地存在 云端不存在，则同步到云端
+                if (data && data != null && data != '' && cloudStorage) {
+                    cloudStorage.setItem(key, data);
+                }
+            } else {
+                // 云端获取的有效值 确保是string
+                if (typeof data === 'object') {
+                    data = JSON.stringify(data);
+                }
+            }
+
+            if (defaultData && (!data || data == null || data == '' || data == {} || data == '{}' || data == 'undefined')) {
+                return defaultData;
+            }
+
+            return data;
+        },
+        // 删除缓存数据
+        removeItem: function (key) {
+            if (cloudStorage) {
+                cloudStorage.removeItem(key);
+            }
+            localStorage.removeItem(key);
+        }
+
+    }
 
     // 配置
     const CONFIG = {
@@ -505,6 +562,8 @@
                             } else if (userMoney > 0 && '心跳红包' != redPacketType) {
                                 // 猜拳胜利
                                 msg = CONFIG.autoUnpackRedPacketMoraText;
+                            } else if (userMoney == '0' && '心跳红包' == redPacketType) {
+                                return;
                             }
                             if (!selfRecord) {
                                 return;
@@ -517,11 +576,11 @@
                                 return;
                             }
                         }
-                        
+
                         if (!msg || msg == '') {
                             msg = CONFIG.autoUnpackRedPacketText;
                         }
- 
+
                         let num = "";
                         if (result.who && result.who.length > 0) {
                             num = result.who.length;
@@ -534,7 +593,7 @@
                                 .replace(/\{num\}/g, num)
                                 .replace(/\{money\}/g, userMoney)
                                 .replace(/\{type\}/g, redPacketType.replace(/红包/g, ''))
-                            + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/15)');
+                            + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/47)');
                     }
                 } else {
                     Util.alert(result.msg);
@@ -1401,7 +1460,7 @@
                 x: rect.left,
                 y: rect.top
             };
-            localStorage.setItem('redPacketMinimizedIconPosition', JSON.stringify(position));
+            muliSpecialStorage.setItem('redPacketMinimizedIconPosition', JSON.stringify(position));
         } catch (error) {
             console.error('保存最小化图标位置失败:', error);
         }
@@ -1410,7 +1469,7 @@
     // 新增：加载最小化图标位置
     function loadMinimizedIconPosition() {
         try {
-            const savedPosition = localStorage.getItem('redPacketMinimizedIconPosition');
+            const savedPosition = muliSpecialStorage.getItem('redPacketMinimizedIconPosition');
             if (savedPosition && minimizedIcon) {
                 const position = JSON.parse(savedPosition);
 
@@ -1473,7 +1532,7 @@
 
         // 保存状态到localStorage
         try {
-            localStorage.setItem('redPacketMinimizedState', isMinimized.toString());
+            muliSpecialStorage.setItem('redPacketMinimizedState', isMinimized.toString());
         } catch (error) {
             console.error('保存最小化状态失败:', error);
         }
@@ -1632,7 +1691,7 @@
         }
 
         isFloatingWindow = !isFloatingWindow;
-        localStorage.setItem('redPacketIsFloatingWindow', isFloatingWindow);
+        muliSpecialStorage.setItem('redPacketIsFloatingWindow', isFloatingWindow);
         updateFloatingButtonState();
     }
 
@@ -1692,7 +1751,7 @@
         // 添加到body
         document.body.appendChild(panel);
 
-        localStorage.setItem('redPacketFloatingWindowData', JSON.stringify(floatingWindowData));
+        muliSpecialStorage.setItem('redPacketFloatingWindowData', JSON.stringify(floatingWindowData));
 
         //console.log('已切换到浮窗模式');
     }
@@ -1730,7 +1789,7 @@
         }
 
 
-        localStorage.setItem('redPacketFloatingWindowData', JSON.stringify(floatingWindowData));
+        muliSpecialStorage.setItem('redPacketFloatingWindowData', JSON.stringify(floatingWindowData));
 
         //console.log('已恢复到停靠模式');
     }
@@ -1915,7 +1974,7 @@
     }
 
     // 导出调试函数
-    window.RedPacketManager = {
+    const RedPacketManager = {
         rescan: function() {
             scanRedPackets();
             //console.log(`重新扫描，共发现 ${redPackets.size} 个红包`);
@@ -2481,6 +2540,10 @@
         if (configPanel) {
             configPanel.style.display = 'none';
         }
+        // 成功保存后刷新
+        setTimeout(() => {
+            location.reload();
+        }, 1500);
     }
 
     // 新增：验证颜色格式的函数
@@ -2555,7 +2618,7 @@
                 autoUnpackRedPacketTypes: CONFIG.autoUnpackRedPacketTypes
             };
 
-            localStorage.setItem('redPacketConfig', JSON.stringify(configToSave));
+            muliSpecialStorage.setItem('redPacketConfig', JSON.stringify(configToSave));
             //console.log('配置已保存到localStorage');
         } catch (error) {
             //console.error('保存配置失败:', error);
@@ -2565,7 +2628,7 @@
     // 从localStorage加载配置
     function loadConfigFromStorage() {
         try {
-            const savedConfig = localStorage.getItem('redPacketConfig');
+            const savedConfig = muliSpecialStorage.getItem('redPacketConfig');
             if (savedConfig) {
                 const parsedConfig = JSON.parse(savedConfig);
 
@@ -2593,7 +2656,7 @@
         }
 
         // 读取存储的浮窗状态和数据
-        const redPacketIsFloatingWindow = localStorage.getItem('redPacketIsFloatingWindow');
+        const redPacketIsFloatingWindow = muliSpecialStorage.getItem('redPacketIsFloatingWindow');
         if (redPacketIsFloatingWindow) {
             if (redPacketIsFloatingWindow == 'true') {
                 isFloatingWindow = true;
@@ -2603,7 +2666,7 @@
         } else {
             isFloatingWindow = false;
         }
-        const redPacketFloatingWindowData = localStorage.getItem('redPacketFloatingWindowData');
+        const redPacketFloatingWindowData = muliSpecialStorage.getItem('redPacketFloatingWindowData');
         if (redPacketFloatingWindowData) {
             floatingWindowData = JSON.parse(redPacketFloatingWindowData);
         }
@@ -2822,7 +2885,7 @@
     // 新增：初始化时检查是否应该显示最小化图标
     function checkInitialMinimizedState() {
         try {
-            const savedMinimizedState = localStorage.getItem('redPacketMinimizedState');
+            const savedMinimizedState = muliSpecialStorage.getItem('redPacketMinimizedState');
             if (savedMinimizedState === 'true') {
                 // 延迟执行，确保面板已创建
                 setTimeout(() => {
@@ -2834,4 +2897,4 @@
         }
     }
 
-})();
+})();q
