@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.5.9
+// @version      2.6.0
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -44,6 +44,7 @@
 // 2026-02-02 muli 跟进鱼排最新版表情包分组功能，并新增一键分配和一键发送功能
 // 2026-03-06 muli 快捷发送消息，快捷键进行调整，单独回车或者ALT + Enter、Ctrl + Enter都会快捷发送，shift + Enter为正常换行键
 // 2026-03-13 muli 修复小尾巴开关在部分场景下，开关状态获取与实际不符的问题
+// 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地
 
 (function () {
     'use strict';
@@ -65,10 +66,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.5.9";
-
-    // 小尾巴开关状态
-    var suffixFlag = window.localStorage['xwb_flag'] != null ? JSON.parse(window.localStorage['xwb_flag']) : false;
+    const version_us = "v2.6.0";
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -80,6 +78,64 @@
     // 区分是否多次引用
     const tabs_keyword = 'title=\"跳转至原消息\"';
 
+    // 存储中心 -- 存储和获取时 都是string 需要手动还原对象类型
+    // 所有数据 优先级都是先从云端获取
+    const muliSpecialStorage = {
+        // 保存数据
+        setItem: function (key, data) {
+            if (typeof data === 'object') {
+                data = JSON.stringify(data);
+            }
+            if (cloudStorage) {
+                cloudStorage.setItem(key, data);
+            }
+            localStorage.setItem(key, data);
+        },
+        // 获取缓存的数据
+        getItem: function (key, defaultData) {
+            console.warn("存储中心测试")
+            if (typeof defaultData === 'object') {
+                defaultData = JSON.stringify(defaultData);
+            }
+            let data = null;
+            // 先从云端获取
+            if (cloudStorage) {
+                data = cloudStorage.getItem(key, defaultData);
+                if (data && typeof data === 'object') {
+                    data = JSON.stringify(data);
+                }
+            }
+            if (!data || data == null || data == '' || data == {} || data == '{}' || data == 'undefined') {
+                data = localStorage.getItem(key);
+                // 本地存在 云端不存在，则同步到云端
+                if (data && data != null && data != '' && cloudStorage) {
+                    cloudStorage.setItem(key, data);
+                }
+            } else {
+                // 云端获取的有效值 确保是string
+                if (typeof data === 'object') {
+                    data = JSON.stringify(data);
+                }
+            }
+
+            if (defaultData && (!data || data == null || data == '' || data == {} || data == '{}' || data == 'undefined')) {
+                return defaultData;
+            }
+
+            return data;
+        },
+        // 删除缓存数据
+        removeItem: function (key) {
+            if (cloudStorage) {
+                cloudStorage.removeItem(key);
+            }
+            localStorage.removeItem(key);
+        }
+
+    }
+
+    // 小尾巴开关状态
+    var suffixFlag = muliSpecialStorage.getItem('xwb_flag') != null ? JSON.parse(muliSpecialStorage.getItem('xwb_flag')) : false;
     // 创建设置面板
     function createSettingsPanel() {
         // 检查是否已存在面板
@@ -264,8 +320,8 @@
 
         // 设置当前选中的预设
         const currentIndex = getCurrentSuffixIndex();
-        const isCustom = window.localStorage['xwb_is_custom_suffix'] === 'true' ||
-            window.localStorage['xwb_is_custom_suffix'] === true;
+        const isCustom = muliSpecialStorage.getItem('xwb_is_custom_suffix') === 'true' ||
+            muliSpecialStorage.getItem('xwb_is_custom_suffix') === true;
         if (!isCustom) {
             presetSelect.value = currentIndex;
         }
@@ -284,7 +340,7 @@
         customInput.id = 'custom-suffix-input';
         customInput.placeholder = '请输入自定义小尾巴...';
         customInput.rows = 3;
-        customInput.value = window.localStorage['xwb_custom_suffix'] || '';
+        customInput.value = muliSpecialStorage.getItem('xwb_custom_suffix') || '';
         customInput.style.cssText = `
             width: 100%;
             padding: 10px 12px;
@@ -556,7 +612,7 @@
                 if (remainingSeconds > 0) {
                     const endTime = Date.now() + (remainingSeconds * 1000);
                     const cooldownKey = `${COOLDOWN_STORAGE_PREFIX}${buttonId}`;
-                    localStorage.setItem(cooldownKey, endTime.toString());
+                    muliSpecialStorage.setItem(cooldownKey, endTime.toString());
                 }
             }
         });
@@ -1414,7 +1470,7 @@
     // ================== 辅助函数 ==================
     function loadConfig() {
         try {
-            const saved = localStorage.getItem(CONFIG_STORAGE_KEY);
+            const saved = muliSpecialStorage.getItem(CONFIG_STORAGE_KEY);
             return saved ? ConfigSerializer.deserialize(saved) : null;
         } catch (e) {
             console.error('加载配置失败:', e);
@@ -2231,7 +2287,7 @@
         // 保存冷却开始时间到本地存储
         const cooldownKey = `${COOLDOWN_STORAGE_PREFIX}${buttonId}`;
         const endTime = Date.now() + (seconds * 1000);
-        localStorage.setItem(cooldownKey, endTime.toString());
+        muliSpecialStorage.setItem(cooldownKey, endTime.toString());
 
         const timer = setInterval(() => {
             remaining--;
@@ -2255,7 +2311,7 @@
                 }
                 btn.classList.remove('cooldown');
                 // 从本地存储中移除冷却记录
-                localStorage.removeItem(cooldownKey);
+                muliSpecialStorage.removeItem(cooldownKey);
             }
         }, 1000);
     }
@@ -2271,7 +2327,7 @@
             if (!buttonId) return;
 
             const cooldownKey = `${COOLDOWN_STORAGE_PREFIX}${buttonId}`;
-            const endTimeStr = localStorage.getItem(cooldownKey);
+            const endTimeStr = muliSpecialStorage.getItem(cooldownKey);
 
             if (endTimeStr) {
                 const endTime = parseInt(endTimeStr);
@@ -2310,11 +2366,11 @@
                                 btn.textContent = originalText;
                             }
                             btn.classList.remove('cooldown');
-                            localStorage.removeItem(cooldownKey);
+                            muliSpecialStorage.removeItem(cooldownKey);
                         }
                     }, 1000);
                 } else {
-                    localStorage.removeItem(cooldownKey);
+                    muliSpecialStorage.removeItem(cooldownKey);
                 }
             }
         });
@@ -3146,7 +3202,7 @@
             };
 
             try {
-                localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(position));
+                muliSpecialStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(position));
             } catch (e) {
                 console.warn('无法保存位置到本地存储:', e);
             }
@@ -3156,7 +3212,7 @@
             try {
                 // 停靠模式不加载位置
                 if (this.container.classList.contains('docked')) return;
-                const saved = localStorage.getItem(POSITION_STORAGE_KEY);
+                const saved = muliSpecialStorage.getItem(POSITION_STORAGE_KEY);
                 if (saved) {
                     const position = JSON.parse(saved);
 
@@ -4213,7 +4269,7 @@
 
             // 使用 ConfigSerializer 序列化配置
             const serializedConfig = ConfigSerializer.serialize(activeConfig);
-            localStorage.setItem(CONFIG_STORAGE_KEY, serializedConfig);
+            muliSpecialStorage.setItem(CONFIG_STORAGE_KEY, serializedConfig);
 
             // 更新最终配置
             FINAL_BUTTONS_CONFIG = JSON.parse(JSON.stringify(activeConfig));
@@ -4230,7 +4286,7 @@
     function resetConfig() {
         if (confirm('确定重置为默认配置吗？当前配置将丢失。')) {
             activeConfig = JSON.parse(JSON.stringify(ORIGINAL_BUTTONS_CONFIG));
-            localStorage.removeItem(CONFIG_STORAGE_KEY);
+            muliSpecialStorage.removeItem(CONFIG_STORAGE_KEY);
 
             updateVisualEditor();
             updatePreview();
@@ -4314,7 +4370,7 @@
 
     function getDockPreference() {
         try {
-            return localStorage.getItem(DOCK_PREF_KEY) === 'true';
+            return muliSpecialStorage.getItem(DOCK_PREF_KEY) === 'true';
         } catch (e) {
             return false;
         }
@@ -4322,7 +4378,7 @@
 
     function setDockPreference(val) {
         try {
-            localStorage.setItem(DOCK_PREF_KEY, val ? 'true' : 'false');
+            muliSpecialStorage.setItem(DOCK_PREF_KEY, val ? 'true' : 'false');
         } catch (e) {}
     }
 
@@ -4448,7 +4504,7 @@
         // 迁移旧配置格式
         if (FINAL_BUTTONS_CONFIG.some(btn => typeof btn.action === 'function')) {
             FINAL_BUTTONS_CONFIG = ConfigSerializer.migrateOldConfig(FINAL_BUTTONS_CONFIG);
-            localStorage.setItem(CONFIG_STORAGE_KEY, ConfigSerializer.serialize(FINAL_BUTTONS_CONFIG));
+            muliSpecialStorage.setItem(CONFIG_STORAGE_KEY, ConfigSerializer.serialize(FINAL_BUTTONS_CONFIG));
         }
 
         // 创建按钮容器
@@ -4752,14 +4808,14 @@
         const presetSelect = document.getElementById('suffix-preset-select');
 
         suffixFlag = suffixToggle.checked;
-        window.localStorage['xwb_flag'] = suffixFlag;
+        muliSpecialStorage.setItem('xwb_flag', suffixFlag);
 
         if (customToggle.checked) {
-            window.localStorage['xwb_is_custom_suffix'] = 'true';
-            window.localStorage['xwb_custom_suffix'] = customInput.value.trim();
+            muliSpecialStorage.setItem('xwb_is_custom_suffix', 'true');
+            muliSpecialStorage.setItem('xwb_custom_suffix', customInput.value.trim());
         } else {
-            delete window.localStorage['xwb_is_custom_suffix'];
-            window.localStorage['xwb_suffix_index'] = presetSelect.value;
+            muliSpecialStorage.removeItem('xwb_is_custom_suffix');
+            muliSpecialStorage.setItem('xwb_suffix_index', presetSelect.value);
         }
 
 
@@ -4830,16 +4886,16 @@
 
     // 获取当前选中的小尾巴索引
     function getCurrentSuffixIndex() {
-        const index = parseInt(window.localStorage['xwb_suffix_index']);
+        const index = parseInt(muliSpecialStorage.getItem('xwb_suffix_index'));
         return isNaN(index) || index < 0 || index >= suffixOptions.length ? 0 : index;
     }
 
     // 获取当前小尾巴文本
     function getCurrentSuffixText() {
         // 优先检查是否有自定义小尾巴
-        const isCustom = window.localStorage['xwb_is_custom_suffix'] === 'true' 
-            || window.localStorage['xwb_is_custom_suffix'] === true;
-        const customSuffix = window.localStorage['xwb_custom_suffix'];
+        const isCustom = muliSpecialStorage.getItem('xwb_is_custom_suffix') === 'true'
+            || muliSpecialStorage.getItem('xwb_is_custom_suffix') === true;
+        const customSuffix = muliSpecialStorage.getItem('xwb_custom_suffix');
 
         // 如果设置了自定义小尾巴且不为空，则返回自定义文本
         if (isCustom && customSuffix) {
