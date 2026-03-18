@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.6.1
+// @version      2.6.2
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -44,7 +44,7 @@
 // 2026-02-02 muli 跟进鱼排最新版表情包分组功能，并新增一键分配和一键发送功能
 // 2026-03-06 muli 快捷发送消息，快捷键进行调整，单独回车或者ALT + Enter、Ctrl + Enter都会快捷发送，shift + Enter为正常换行键
 // 2026-03-13 muli 修复小尾巴开关在部分场景下，开关状态获取与实际不符的问题
-// 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地
+// 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地（2.6.0）
 // 2026-03-18 muli 批量消息支持设置延迟发送
 
 (function () {
@@ -67,7 +67,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.6.1";
+    const version_us = "v2.6.2";
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -3905,6 +3905,11 @@
                     value = param.defaultValue || '';
                 }
 
+                // 特殊处理
+                if (type ==  'sendMsg' && param.name == 'delay') {
+                    value = button.action.delay || null;
+                }
+
                 group.innerHTML = `
                     <label class="form-label">${param.label}${param.required ? ' *' : ''}</label>
                     <input type="${param.type}" class="form-input" name="action_${param.name}"
@@ -3912,6 +3917,7 @@
                            placeholder="${param.placeholder || ''}"
                            ${param.required ? 'required' : ''}>
                 `;
+
             }
 
             container.appendChild(group);
@@ -4055,6 +4061,11 @@
                     value = currentParams;
                 } else {
                     value = param.defaultValue || '';
+                }
+
+                // 特殊处理
+                if (type ==  'sendMsg' && param.name == 'delay') {
+                    value = childData.action.delay || null;
                 }
 
                 group.innerHTML = `
