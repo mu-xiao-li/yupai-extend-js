@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.6.0b
+// @version      2.6.1
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -45,6 +45,7 @@
 // 2026-03-06 muli 快捷发送消息，快捷键进行调整，单独回车或者ALT + Enter、Ctrl + Enter都会快捷发送，shift + Enter为正常换行键
 // 2026-03-13 muli 修复小尾巴开关在部分场景下，开关状态获取与实际不符的问题
 // 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地
+// 2026-03-18 muli 批量消息支持设置延迟发送
 
 (function () {
     'use strict';
@@ -66,7 +67,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.6.0b";
+    const version_us = "v2.6.1";
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -455,10 +456,14 @@
     const ActionExecutor = {
         functions: {
             sendMsg: (params) => {
-                if (typeof params === 'string') {
-                    return sendMsg(params);
-                } else if (Array.isArray(params)) {
-                    return sendMsg(params);
+                if (typeof params.params === 'string') {
+                    return sendMsg(params.params);
+                } else if (Array.isArray(params.params)) {
+                    if (params.delay) {
+                        return sendMessagesApi(params.params, params.delay);
+                    } else {
+                        return sendMsg(params.params);
+                    }
                 }
                 return Promise.reject('sendMsg参数错误');
             },
@@ -549,6 +554,9 @@
                 }
 
                 if (actionConfig.type && this.functions[actionConfig.type]) {
+                    if (actionConfig.type === 'sendMsg') {
+                        return await this.functions[actionConfig.type](actionConfig);
+                    }
                     return await this.functions[actionConfig.type](actionConfig.params);
                 }
 
@@ -569,7 +577,7 @@
 
             switch (actionConfig.type) {
                 case 'sendMsg':
-                    return () => sendMsg(actionConfig.params);
+                    return () => sendMsg(actionConfig);
                 case 'sendRedPacketMsg':
                     return () => sendRedPacketMsg(actionConfig.params);
                 case 'muliRefreshPage':
@@ -1227,6 +1235,39 @@
         thisIconText = thisIconText.replace("#{fontcolor}", fontcolor);
         //发送消息
         sendMsg(thisIconText);
+    }
+
+    // 睡眠毫秒数
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // 延迟循环消息
+    function sendMessagesApi(messages, delay) {
+        if (!delay) {
+            delay = 0;
+        }
+        return new Promise((resolve, reject) => {
+            let index = 0;
+
+            function sendNext() {
+                if (index >= messages.length) {
+                    resolve();
+                    return;
+                }
+
+                const message = messages[index];
+                index++;
+
+                sendMsg(message)
+                    .then(() => {
+                        setTimeout(sendNext, delay);
+                    })
+                    .catch(reject);
+            }
+
+            sendNext();
+        });
     }
 
     // 发送消息函数
@@ -3274,6 +3315,7 @@
     let ACTION_TEMPLATES = {
         sendMsg: {
             params: [
+                { name: 'delay', type: 'number', label: '延迟(ms)，多条消息时才有效', defaultValue: 0 },
                 { name: 'message', type: 'msg', label: '消息内容（多条逗号隔开）', required: true }
             ]
         },
@@ -4652,6 +4694,11 @@
                     } else {
                         buttonData.action.params = message;
                     }
+                    var delay = form.querySelector('[name="action_delay"]')?.value;
+                    if (!delay) {
+                        delay = 0;
+                    }
+                    buttonData.action.delay = delay;
                 } else if (actionType === 'sendIconTextMsg') {
                     var message = form.querySelector('[name="action_message"]')?.value;
                     buttonData.action.params = message;
@@ -4728,6 +4775,11 @@
                             } else {
                                 childData.action.params = message;
                             }
+                            var delay = childForm.querySelector('[name="action_delay"]')?.value;
+                            if (!delay) {
+                                delay = 0;
+                            }
+                            childData.action.delay = delay;
                         } else if (childActionType === 'sendIconTextMsg') {
                             var message = childForm.querySelector('[name="action_message"]')?.value;
                             childData.action.params = message;
