@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.4.1
+// @version      1.4.1b
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -27,7 +27,7 @@
 (function() {
     'use strict';
 
-    const version = 'v1.4.1';
+    const version = 'v1.4.1b';
 
     // 存储中心 -- 存储和获取时 都是string 需要手动还原对象类型
     // 所有数据 优先级都是先从云端获取
