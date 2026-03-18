@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.6.0
+// @version      2.6.0b
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -66,7 +66,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.6.0";
+    const version_us = "v2.6.0b";
 
     // 设置面板状态
     let settingsPanelVisible = false;
