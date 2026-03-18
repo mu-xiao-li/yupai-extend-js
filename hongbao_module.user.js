@@ -37,20 +37,19 @@
             if (typeof data === 'object') {
                 data = JSON.stringify(data);
             }
-            if (cloudStorage) {
+            if (typeof cloudStorage !== 'undefined') {
                 cloudStorage.setItem(key, data);
             }
             localStorage.setItem(key, data);
         },
         // 获取缓存的数据
         getItem: function (key, defaultData) {
-            console.warn("存储中心测试")
             if (typeof defaultData === 'object') {
                 defaultData = JSON.stringify(defaultData);
             }
             let data = null;
             // 先从云端获取
-            if (cloudStorage) {
+            if (typeof cloudStorage !== 'undefined') {
                 data = cloudStorage.getItem(key, defaultData);
                 if (data && typeof data === 'object') {
                     data = JSON.stringify(data);
@@ -59,7 +58,7 @@
             if (!data || data == null || data == '' || data == {} || data == '{}' || data == 'undefined') {
                 data = localStorage.getItem(key);
                 // 本地存在 云端不存在，则同步到云端
-                if (data && data != null && data != '' && cloudStorage) {
+                if (data && data != null && data != '' && typeof cloudStorage !== 'undefined') {
                     cloudStorage.setItem(key, data);
                 }
             } else {
@@ -77,7 +76,7 @@
         },
         // 删除缓存数据
         removeItem: function (key) {
-            if (cloudStorage) {
+            if (typeof cloudStorage !== 'undefined') {
                 cloudStorage.removeItem(key);
             }
             localStorage.removeItem(key);
@@ -2897,4 +2896,4 @@
         }
     }
 
-})();q
+})();
