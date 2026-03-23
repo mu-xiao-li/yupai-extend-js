@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.4.1b
+// @version      1.4.2
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -23,11 +23,12 @@
 // 2026-03-11 muli 新增自动抢红包，求饶彩蛋
 // 2026-3-12 muli 彩蛋文案可配置
 // 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地
+// 2026-03-23 muli 新增猜拳红包自动抢的最大数额限制配置
 
 (function() {
     'use strict';
 
-    const version = 'v1.4.1b';
+    const version = 'v1.4.2';
 
     // 存储中心 -- 存储和获取时 都是string 需要手动还原对象类型
     // 所有数据 优先级都是先从云端获取
@@ -118,6 +119,7 @@
         autoUnpackRedPacketMoraZeroText: "🤪搞笑的**{user}**！😄\n### 👎交税！！！你滴积分免费咯 ~~~🤪",// 抢猜拳红包0分文案
         autoUnpackRedPacketMoraText: "🙏感谢**{user}**老板的公益慈善！😄\n💰你的**{money}**积分，咱就笑纳啦~\n### 😎不要在被窝里哭鼻子哦~🤪",// 抢猜拳胜利文案
         autoUnpackRedPacketExclusiveText: "🙏感谢**{user}**宝宝的**{type}**红包！🧧\n🤩🤩🤩居然有**{money}**积分！！！\n### 💗爱你哦😘~",// 专属红包文案
+        autoUnpackRedPacketAmount: 2000, // 猜拳红包自动抢的最大数额限制
     };
 
     // 单个红包高度
@@ -487,6 +489,8 @@
             // 创建观察器来监听红包状态变化
             setupRedPacketObserver(packetData);
 
+
+
             // 检查是否开启了自动抢红包
             if (CONFIG.autoUnpackRedPacket && CONFIG.autoUnpackRedPacketTypes.length >
                 0 && packetData.status !== 'empty' && !autoUnpackRedPacketList.has(packetId)) {
@@ -499,6 +503,16 @@
                     if (CONFIG.autoUnpackRedPacketTime > 10000) {
                         CONFIG.autoUnpackRedPacketTime = 10000;
                     }
+                    // 如果是猜拳红包，检查猜拳数额是否超过设定可抢数额
+                    if ('猜拳红包' == redPacketType || '石头剪刀布红包' == redPacketType) {
+                        const amount = getRedPacketAmount(redPacket);
+                        if (amount && CONFIG.autoUnpackRedPacketAmount && CONFIG.autoUnpackRedPacketAmount <= amount) {
+                            autoUnpackRedPacketList.add(packetId);
+                            return;
+                        }
+                    }
+
+
                     //调用自动抢红包函数
                     setTimeout(() => {
                         muliUnpackRedPacket(packetId, getRandomInt(0, 2), redPacket, redPacketType)}
@@ -553,6 +567,11 @@
                         if ('猜拳红包' == redPacketType || '石头剪刀布红包' == redPacketType || '心跳红包' == redPacketType) {
                             // 如果抢到的积分是负数，触发求饶
                             if (userMoney && userMoney < 0) {
+                                // 如果是输给自己的话 不发送
+                                if (result.info.userName && ((currentUserId && result.info.userName == currentUserId)
+                                    || (currentUserName && result.info.userName == currentUserName))) {
+                                    return;
+                                }
                                 userMoney = 0 - userMoney;
                                 msg = CONFIG.autoUnpackRedPacketLoseText;
                             } else if (userMoney == '0' && '心跳红包' != redPacketType) {
@@ -668,6 +687,30 @@
     // 随机数
     function getRandomInt(min, max) {
         return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    // 获取红包数额-只支持猜拳红包
+    function getRedPacketAmount(redPacket) {
+        // 猜拳红包中，数额显示在图标后，根据图标定位
+        const key = "<svg style=\"vertical-align: -2px; width: 13px; height: 13px\"><use xlink:href=\"#coin\"></use></svg> ";
+        let coinDivText = redPacket.innerHTML;
+        if (!coinDivText.includes(key)) return 0;
+
+        let coinDivText2 = coinDivText.substring(coinDivText.lastIndexOf(key));
+        coinDivText2 = coinDivText2.replace(key, '');
+        if (coinDivText2) {
+            coinDivText2 = coinDivText2.substring(0, coinDivText2.indexOf('</div>'));
+            if (coinDivText2 && isNumeric(coinDivText2)) {
+                return parseFloat(coinDivText2);
+            }
+        }
+        return 0;
+    }
+
+    function isNumeric(value) {
+        // 空字符串或 null/undefined 返回 false
+        if (value == null) return false;
+        return !isNaN(value) && !isNaN(parseFloat(value));
     }
 
     // 获取红包类型
@@ -2211,6 +2254,14 @@
                  
             </div>
             <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>猜拳红包超过多少时不自动抢:</span>
+                    <input type="number" id="autoUnpackRedPacketAmount" min="0"
+                           style="width: 80px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </label>
+                 
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
                 <label style="display: flex; align-items: center; font-size: 13px;">
                     <input type="checkbox" id="enableAutoUnpackRedPacketText" style="margin-right: 8px;">
                     启用感谢文案
@@ -2457,6 +2508,7 @@
         document.getElementById('autoUnpackRedPacket').checked = CONFIG.autoUnpackRedPacket;
         document.getElementById('enableAutoUnpackRedPacketText').checked = CONFIG.enableAutoUnpackRedPacketText;
         document.getElementById('autoUnpackRedPacketTime').value = CONFIG.autoUnpackRedPacketTime;
+        document.getElementById('autoUnpackRedPacketAmount').value = CONFIG.autoUnpackRedPacketAmount;
         document.getElementById('autoUnpackRedPacketTextMoney').value = CONFIG.autoUnpackRedPacketTextMoney;
         document.getElementById('autoUnpackRedPacketText').value = CONFIG.autoUnpackRedPacketText;
         document.getElementById('autoUnpackRedPacketLoseText').value = CONFIG.autoUnpackRedPacketLoseText;
@@ -2500,6 +2552,7 @@
         CONFIG.autoUnpackRedPacket = document.getElementById('autoUnpackRedPacket').checked;
         CONFIG.enableAutoUnpackRedPacketText = document.getElementById('enableAutoUnpackRedPacketText').checked;
         CONFIG.autoUnpackRedPacketTime = document.getElementById('autoUnpackRedPacketTime').value;
+        CONFIG.autoUnpackRedPacketAmount = document.getElementById('autoUnpackRedPacketAmount').value;
         CONFIG.autoUnpackRedPacketText = document.getElementById('autoUnpackRedPacketText').value;
         CONFIG.autoUnpackRedPacketLoseText = document.getElementById('autoUnpackRedPacketLoseText').value;
         CONFIG.autoUnpackRedPacketMoraZeroText = document.getElementById('autoUnpackRedPacketMoraZeroText').value;
@@ -2607,6 +2660,7 @@
                 backgroundColor: CONFIG.backgroundColor,
                 autoUnpackRedPacket: CONFIG.autoUnpackRedPacket,
                 autoUnpackRedPacketTime: CONFIG.autoUnpackRedPacketTime,
+                autoUnpackRedPacketAmount: CONFIG.autoUnpackRedPacketAmount,
                 autoUnpackRedPacketText: CONFIG.autoUnpackRedPacketText,
                 autoUnpackRedPacketLoseText: CONFIG.autoUnpackRedPacketLoseText,
                 autoUnpackRedPacketMoraZeroText: CONFIG.autoUnpackRedPacketMoraZeroText,
