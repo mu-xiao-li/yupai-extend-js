@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.6.2
+// @version      2.6.3
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -46,6 +46,7 @@
 // 2026-03-13 muli 修复小尾巴开关在部分场景下，开关状态获取与实际不符的问题
 // 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地（2.6.0）
 // 2026-03-18 muli 批量消息支持设置延迟发送
+// 2026-04-07 muli （2.6.3） 修复shift + Enter不键入换行问题
 
 (function () {
     'use strict';
@@ -67,7 +68,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.6.2";
+    const version_us = "v2.6.3";
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -1535,6 +1536,7 @@
             if (event.key === 'Enter' && event.shiftKey) {
                 // event.preventDefault();
                 // sendButton.click();
+                insertToVditorInput("\n");
             } else if (event.key === 'Enter' && event.altKey) {
                 event.preventDefault();
                 sendButton.click();
@@ -3906,7 +3908,7 @@
                 }
 
                 // 特殊处理
-                if (type ==  'sendMsg' && param.name == 'delay') {
+                if (type ==  'sendMsg' && param.name == 'delay' && button.action) {
                     value = button.action.delay || null;
                 }
 
@@ -4064,7 +4066,7 @@
                 }
 
                 // 特殊处理
-                if (type ==  'sendMsg' && param.name == 'delay') {
+                if (type ==  'sendMsg' && param.name == 'delay' && childData.action) {
                     value = childData.action.delay || null;
                 }
 
