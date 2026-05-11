@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.6.3
+// @version      2.6.5
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -47,6 +47,8 @@
 // 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地（2.6.0）
 // 2026-03-18 muli 批量消息支持设置延迟发送
 // 2026-04-07 muli （2.6.3） 修复shift + Enter不键入换行问题
+// 2026-04-30 muli （2.6.4） 新增趣味小尾巴自选
+// 2026-05-08 muli （2.6.5） 猜拳红包新增随机手势，只要手势填入’无‘
 
 (function () {
     'use strict';
@@ -68,7 +70,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.6.3";
+    const version_us = "v2.6.5";
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -1339,6 +1341,8 @@
             } else if (msg.gesture == '布') {
                 msg.gesture = '2';
             }
+        } else if (msg.gesture && msg.gesture == '无') {
+            msg.gesture = getRandomInt(0, 2) + '';
         } else {
             if(msg.type == 'rockPaperScissors') {
                 let input = prompt('请输入：石头（0）、剪刀（1）、布（2）', '0');
@@ -3308,6 +3312,7 @@
     ];
 
     let RED_PACKET_GESTURE = [
+        '-',
         '无',
         '石头',
         '剪刀',
@@ -3354,7 +3359,7 @@
                 { name: 'count', type: 'number', label: '红包数量', defaultValue: 1, required: false },
                 { name: 'msg', type: 'text', label: '红包信息', defaultValue: '摸鱼者事尽成', required: false },
                 { name: 'recivers', type: 'text', label: '专属用户名（逗号隔开，非专属可不填）', required: false },
-                { name: 'gesture', type: 'select', label: '石头，剪刀，布（非猜拳可不填）', options: RED_PACKET_GESTURE, required: false },
+                { name: 'gesture', type: 'select', label: '石头，剪刀，布（非猜拳可不填，无：随机）', options: RED_PACKET_GESTURE, required: false },
             ]
         }
     };
@@ -4939,9 +4944,10 @@
     // 小尾巴选项数组
     const suffixOptions = [
         '时光清浅处，一步一安然。',
-        '心若向阳，无畏悲伤。',
-        '岁月静好，现世安稳。',
-        '人生如逆旅，我亦是行人。',
+        '沐里天下第一！！！。',
+        '我是小尾巴，别动我。',
+        '防小黑屋专用',
+        '搞怪验证码',
         '胸有丘壑，眼存山河。',
         '但行好事，莫问前程。',
         '愿有岁月可回首，且以深情共白头。',
@@ -4967,7 +4973,18 @@
         }
 
         // 否则返回预设的小尾巴选项
-        return suffixOptions[getCurrentSuffixIndex()] || suffixOptions[0];
+        var tempTxt = suffixOptions[getCurrentSuffixIndex()] || suffixOptions[0];
+        if (tempTxt && tempTxt == '防小黑屋专用') {
+            tempTxt = "===【" + getRandomInt(100000, 999999) + "】===";
+        } else if (tempTxt && tempTxt == '搞怪验证码') {
+            tempTxt = "您的验证码是：" + getRandomInt(100000, 999999);
+        }
+        return tempTxt;
+    }
+
+    // 随机数
+    function getRandomInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
     // 重写发送消息函数，添加小尾巴
