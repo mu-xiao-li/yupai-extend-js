@@ -2,16 +2,19 @@
 // @name         鱼排消息云·关键词监听
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.0.0
+// @version      1.0.1
 // @description  监听聊天室关键词/指定用户，消息云图标闪烁提醒，聚合记录并支持上下文追溯
 // @author       muli 定制
 // @match        https://fishpi.cn/cr
 // @icon         https://file.fishpi.cn/2025/11/blob-4d0e46ad.png?imageView2/1/w/48/h/48/interlace/0/q/100
+// @downloadURL  https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/message_listening.user.js
+// @updateURL    https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/message_listening.user.js
 // @grant        GM_notification
 // @grant        muliSpecialStorage.setItem
 // @grant        muliSpecialStorage.getItem
 // @run-at       document-end
 // ==/UserScript==
+// 2026-06-04 muli 修复暂停监听按钮与实际是否监听状态不一致问题，修复弹出界面无法拖动问题
 
 (function() {
     'use strict';
@@ -128,6 +131,7 @@
                 const cfg = JSON.parse(saved);
                 CONFIG = { ...CONFIG, ...cfg };
                 //console.log('[消息云] 配置已加载', CONFIG);
+                isPaused = !CONFIG.enableMonitor;
             } catch(e) { console.error('[消息云] 加载配置失败', e); }
         }
     }
@@ -491,6 +495,49 @@
         });
     }
 
+    // 使面板可拖拽（拖拽头部移动整个面板）
+    function makePanelDraggable(panel, handle) {
+        let isDragging = false;
+        let dragStartX = 0, dragStartY = 0;
+        let panelStartLeft = 0, panelStartTop = 0;
+
+        handle.style.cursor = 'move';
+        handle.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            isDragging = false;
+            // 获取面板当前的位置（left/top）
+            const rect = panel.getBoundingClientRect();
+            panelStartLeft = rect.left;
+            panelStartTop = rect.top;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+
+            const onMouseMove = (moveEvent) => {
+                const dx = moveEvent.clientX - dragStartX;
+                const dy = moveEvent.clientY - dragStartY;
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) isDragging = true;
+                if (isDragging) {
+                    let newLeft = panelStartLeft + dx;
+                    let newTop = panelStartTop + dy;
+                    // 限制边界
+                    newLeft = Math.min(window.innerWidth - panel.offsetWidth, Math.max(0, newLeft));
+                    newTop = Math.min(window.innerHeight - panel.offsetHeight, Math.max(0, newTop));
+                    panel.style.left = newLeft + 'px';
+                    panel.style.top = newTop + 'px';
+                    panel.style.right = 'auto';
+                    panel.style.bottom = 'auto';
+                }
+            };
+            const onMouseUp = () => {
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
+            };
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
     // 更新未读数字角标
     function updateUnreadBadge() {
         const badge = document.getElementById('msgcloud-badge');
@@ -638,7 +685,7 @@
             font-family: system-ui, -apple-system, sans-serif;
         `;
         panel.innerHTML = `
-            <div style="background: #2c3e50; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; cursor: move;">
+            <div id="msgcloud-header" style="background: #2c3e50; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; cursor: move;">
                 <span>☁️ 消息云 · 监听面板</span>
                 <div style="display: flex; gap: 8px;">
                     <button id="msgcloud-pause-btn" style="background: none; border: none; color: white; font-size: 16px; cursor: pointer;" title="暂停/恢复">⏸️</button>
@@ -655,9 +702,10 @@
         `;
         document.body.appendChild(panel);
         mainPanel = panel;
+
         // 使头部可拖拽
         const header = panel.querySelector('div:first-child');
-        makeDraggable(header);
+        makePanelDraggable(panel, header);
         // 绑定按钮事件
         panel.querySelector('#msgcloud-close-btn').addEventListener('click', () => toggleMainPanel());
         panel.querySelector('#msgcloud-config-btn').addEventListener('click', () => showConfigDialog());
@@ -676,6 +724,8 @@
             pauseBtn.textContent = isPaused ? '▶️' : '⏸️';
             document.getElementById('msgcloud-status').innerText = isPaused ? '已暂停' : '监听中';
             //console.log(`[消息云] 监听${isPaused ? '已暂停' : '已恢复'}`);
+            CONFIG.enableMonitor = !isPaused;
+            saveConfig();
         });
         renderGroupList();
         return panel;
@@ -685,6 +735,7 @@
     function toggleMainPanel() {
         if (!mainPanel) {
             buildMainPanel();
+            updatePanelStyles();
             isPanelOpen = true;
         } else {
             mainPanel.remove();
@@ -732,6 +783,7 @@
             if (!CONFIG.enableMonitor) isPaused = true;
             else isPaused = false;
             if (document.getElementById('msgcloud-status')) {
+                document.getElementById('msgcloud-pause-btn').textContent = isPaused ? '▶️' : '⏸️';
                 document.getElementById('msgcloud-status').innerText = CONFIG.enableMonitor ? '监听中' : '已禁用';
             }
             modal.remove();
@@ -757,6 +809,16 @@
         }
     }
 
+    // 根据配置更新样式
+    function updatePanelStyles() {
+        if (document.getElementById('msgcloud-pause-btn')) {
+            document.getElementById('msgcloud-pause-btn').textContent = isPaused ? '▶️' : '⏸️';
+        }
+        if (document.getElementById('msgcloud-status')) {
+            document.getElementById('msgcloud-status').innerText = isPaused ? '已暂停' : '监听中';
+        }
+    }
+
     // 入口：等待聊天室容器出现，启动监听和全量扫描
     function init() {
         loadConfig();
@@ -774,6 +836,9 @@
                 //console.log('[消息云] 初始化完成');
             }
         }, 500);
+
+        // 根据配置初始化样式
+        updatePanelStyles();
 
         // 页面卸载时断开观察器
         window.addEventListener('beforeunload', () => {
