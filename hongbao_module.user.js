@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.4.2
+// @version      1.4.3
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -24,11 +24,12 @@
 // 2026-3-12 muli 彩蛋文案可配置
 // 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地
 // 2026-03-23 muli 新增猜拳红包自动抢的最大数额限制配置
+// 2026-08-12 muli 强制感谢语超过200积分触发，心跳红包负积分不再触发感谢
 
 (function() {
     'use strict';
 
-    const version = 'v1.4.2';
+    const version = 'v1.4.3';
 
     // 存储中心 -- 存储和获取时 都是string 需要手动还原对象类型
     // 所有数据 优先级都是先从云端获取
@@ -114,7 +115,7 @@
         autoUnpackRedPacketTime: 5000,// 3000 ~ 10000 ms，强制最低3000ms
         autoUnpackRedPacketText: '🙏感谢**{user}**老板的**{count}**个**{type}**红包🧧\n💰我在第【{num}】位抢到了【{money}】💰\n### 🎉祝老板永远不死！天天开心！🎉',// 感谢文案
         enableAutoUnpackRedPacketText: false, // 感谢文案开关
-        autoUnpackRedPacketTextMoney: 50,// 触发感谢的金额数
+        autoUnpackRedPacketTextMoney: 200,// 触发感谢的金额数
         autoUnpackRedPacketLoseText: "😱天杀的**{user}**！我不要你的**{type}**红包了！😱\n💰还我的**{money}**血汗积分💰\n## 🧎‍♀️🧎‍🧎‍我再也不赌了😭😭😭！！！",// 抢红包负分文案
         autoUnpackRedPacketMoraZeroText: "🤪搞笑的**{user}**！😄\n### 👎交税！！！你滴积分免费咯 ~~~🤪",// 抢猜拳红包0分文案
         autoUnpackRedPacketMoraText: "🙏感谢**{user}**老板的公益慈善！😄\n💰你的**{money}**积分，咱就笑纳啦~\n### 😎不要在被窝里哭鼻子哦~🤪",// 抢猜拳胜利文案
@@ -566,7 +567,7 @@
                         // 猜拳红包特殊处理
                         if ('猜拳红包' == redPacketType || '石头剪刀布红包' == redPacketType || '心跳红包' == redPacketType) {
                             // 如果抢到的积分是负数，触发求饶
-                            if (userMoney && userMoney < 0) {
+                            if (userMoney && userMoney < 0 && '心跳红包' != redPacketType) {
                                 // 如果是输给自己的话 不发送
                                 if (result.info.userName && ((currentUserId && result.info.userName == currentUserId)
                                     || (currentUserName && result.info.userName == currentUserName))) {
@@ -589,6 +590,9 @@
                         } else if ('专属红包' == redPacketType && selfRecord && userMoney && userMoney > 0) {
                             msg = CONFIG.autoUnpackRedPacketExclusiveText;
                         } else {
+                            if (CONFIG.autoUnpackRedPacketTextMoney && CONFIG.autoUnpackRedPacketTextMoney < 200) {
+                                CONFIG.autoUnpackRedPacketTextMoney = 200;
+                            }
                             // 超过这个金额上限再发送感谢
                             if (!userMoney || ((userMoney && userMoney != "") && userMoney >= 0 && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
                                 return;
@@ -604,14 +608,18 @@
                             num = result.who.length;
                         }
 
-
+                        // if (result.info.userName && result.info.userName == "18") {
+                        //     result.info.userName = "最帅最酷最美的月月"
+                        // } else if (result.info.userName && result.info.userName == "ZDream03") {
+                        //     result.info.userName = "全世界第二帅的小梦"
+                        // }
                         sendMsg(msg
                                 .replace(/\{user\}/g, result.info.userName)
                                 .replace(/\{count\}/g, result.info.count)
                                 .replace(/\{num\}/g, num)
                                 .replace(/\{money\}/g, userMoney)
                                 .replace(/\{type\}/g, redPacketType.replace(/红包/g, ''))
-                            + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/47)');
+                            + '\n> 来自红包板块---[【' + version + '】](https://ext.adventext.fun/item/62)-' + getRandomInt(10, 99));
                     }
                 } else {
                     Util.alert(result.msg);
@@ -2559,6 +2567,9 @@
         CONFIG.autoUnpackRedPacketMoraText = document.getElementById('autoUnpackRedPacketMoraText').value;
         CONFIG.autoUnpackRedPacketExclusiveText = document.getElementById('autoUnpackRedPacketExclusiveText').value;
         CONFIG.autoUnpackRedPacketTextMoney = document.getElementById('autoUnpackRedPacketTextMoney').value;
+        if (autoUnpackRedPacketTextMoney && autoUnpackRedPacketTextMoney < 200) {
+            autoUnpackRedPacketTextMoney = 200;
+        }
         CONFIG.autoUnpackRedPacketTypes = [];
         document.querySelectorAll('.auto-unpack-redpacket-type:checked').forEach(checkbox => {
             CONFIG.autoUnpackRedPacketTypes.push(checkbox.value);
