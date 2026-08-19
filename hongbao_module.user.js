@@ -568,9 +568,9 @@
 
                         let msg = CONFIG.autoUnpackRedPacketText;
                         // 猜拳红包特殊处理
-                        if ('猜拳红包' == redPacketType || '石头剪刀布红包' == redPacketType || '心跳红包' == redPacketType) {
+                        if ('猜拳红包' == redPacketType || '石头剪刀布红包' == redPacketType) {
                             // 如果抢到的积分是负数，触发求饶
-                            if (userMoney && userMoney < 0 && '心跳红包' != redPacketType) {
+                            if (userMoney && userMoney < 0) {
                                 // 如果是输给自己的话 不发送
                                 if (result.info.userName && ((currentUserId && result.info.userName == currentUserId)
                                     || (currentUserName && result.info.userName == currentUserName))) {
@@ -578,13 +578,13 @@
                                 }
                                 userMoney = 0 - userMoney;
                                 msg = CONFIG.autoUnpackRedPacketLoseText;
-                            } else if (userMoney == '0' && '心跳红包' != redPacketType) {
+                            } else if (userMoney == '0') {
                                 // 猜拳平手
                                 msg = CONFIG.autoUnpackRedPacketMoraZeroText;
-                            } else if (userMoney > 0 && '心跳红包' != redPacketType) {
+                            } else if (userMoney > 0) {
                                 // 猜拳胜利
                                 msg = CONFIG.autoUnpackRedPacketMoraText;
-                            } else if (userMoney == '0' && '心跳红包' == redPacketType) {
+                            } else if (userMoney == '0') {
                                 return;
                             }
                             if (!selfRecord) {
