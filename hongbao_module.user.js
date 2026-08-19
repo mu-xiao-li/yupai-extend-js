@@ -2,7 +2,7 @@
 // @name         鱼排红包板块
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      1.4.3
+// @version      1.4.4
 // @description  右侧新增红包板块，将聊天室红包同步到红包板块，保持实时更新，支持多类型红包
 // @author       muli
 // @match        https://fishpi.cn/cr
@@ -25,11 +25,12 @@
 // 2026-03-16 muli 统一封装存储方法，适配鱼排云端存储，并自动同步存储云端和本地
 // 2026-03-23 muli 新增猜拳红包自动抢的最大数额限制配置
 // 2026-08-12 muli 强制感谢语超过200积分触发，心跳红包负积分不再触发感谢
+// 2026-08-19 muli 修复心跳红包负分也触发感谢的bug，新增专属用户称呼配置
 
 (function() {
     'use strict';
 
-    const version = 'v1.4.3';
+    const version = 'v1.4.4';
 
     // 存储中心 -- 存储和获取时 都是string 需要手动还原对象类型
     // 所有数据 优先级都是先从云端获取
@@ -121,6 +122,8 @@
         autoUnpackRedPacketMoraText: "🙏感谢**{user}**老板的公益慈善！😄\n💰你的**{money}**积分，咱就笑纳啦~\n### 😎不要在被窝里哭鼻子哦~🤪",// 抢猜拳胜利文案
         autoUnpackRedPacketExclusiveText: "🙏感谢**{user}**宝宝的**{type}**红包！🧧\n🤩🤩🤩居然有**{money}**积分！！！\n### 💗爱你哦😘~",// 专属红包文案
         autoUnpackRedPacketAmount: 2000, // 猜拳红包自动抢的最大数额限制
+        exclusiveUsers: ["18", "ZDream03", "muli"], // 专属用户
+        exclusiveUserTexes: ["最帅最酷最美的月月", "全世界第二帅的小梦", "暗影小姐"] // 对应坐标专属用户的专属称呼
     };
 
     // 单个红包高度
@@ -517,7 +520,7 @@
                     //调用自动抢红包函数
                     setTimeout(() => {
                         muliUnpackRedPacket(packetId, getRandomInt(0, 2), redPacket, redPacketType)}
-                        , CONFIG.autoUnpackRedPacketTime - 500 );
+                        , CONFIG.autoUnpackRedPacketTime - 300 );
                     autoUnpackRedPacketList.add(packetId);
 
 
@@ -594,7 +597,7 @@
                                 CONFIG.autoUnpackRedPacketTextMoney = 200;
                             }
                             // 超过这个金额上限再发送感谢
-                            if (!userMoney || ((userMoney && userMoney != "") && userMoney >= 0 && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
+                            if (!userMoney || ((userMoney && userMoney != "") && userMoney < CONFIG.autoUnpackRedPacketTextMoney)) {
                                 return;
                             }
                         }
@@ -607,12 +610,13 @@
                         if (result.who && result.who.length > 0) {
                             num = result.who.length;
                         }
-
-                        // if (result.info.userName && result.info.userName == "18") {
-                        //     result.info.userName = "最帅最酷最美的月月"
-                        // } else if (result.info.userName && result.info.userName == "ZDream03") {
-                        //     result.info.userName = "全世界第二帅的小梦"
-                        // }
+                        // 专属用户称呼
+                        if (result.info.userName && (CONFIG.exclusiveUsers && CONFIG.exclusiveUserTexes) &&
+                               (CONFIG.exclusiveUsers.length <= CONFIG.exclusiveUserTexes.length)
+                                && CONFIG.exclusiveUsers.indexOf(result.info.userName) > -1) {
+                            const userIndex = CONFIG.exclusiveUsers.indexOf(result.info.userName);
+                            result.info.userName = CONFIG.exclusiveUserTexes[userIndex];
+                        }
                         sendMsg(msg
                                 .replace(/\{user\}/g, result.info.userName)
                                 .replace(/\{count\}/g, result.info.count)
@@ -2336,6 +2340,22 @@
                 <textarea type="text" id="autoUnpackRedPacketExclusiveText" 
                            style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
             </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>💗专属用户（鱼排id，多个使用英文逗号隔开）：</span>
+                </label>
+                <br>
+                <textarea type="text" id="exclusiveUsers" 
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
+            </div>
+            <div class="config-item" style="margin-bottom: 8px;">
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                    <span>💗专属用户称呼（对应专属用户部分的称呼替换，多个使用英文逗号隔开）:</span>
+                </label>
+                <br>
+                <textarea type="text" id="exclusiveUserTexes" 
+                           style="width: 320px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;height: 60px;"></textarea>
+            </div>
             <div style="margin-left: 20px; border-left: 2px solid #f0f0f0; padding-left: 15px;">
                 <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">自动抢以下红包类型:</p>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
@@ -2523,6 +2543,8 @@
         document.getElementById('autoUnpackRedPacketMoraZeroText').value = CONFIG.autoUnpackRedPacketMoraZeroText;
         document.getElementById('autoUnpackRedPacketMoraText').value = CONFIG.autoUnpackRedPacketMoraText;
         document.getElementById('autoUnpackRedPacketExclusiveText').value = CONFIG.autoUnpackRedPacketExclusiveText;
+        document.getElementById('exclusiveUsers').value = CONFIG.exclusiveUsers && CONFIG.exclusiveUsers.length > 0 ? CONFIG.exclusiveUsers.join(",") : null;
+        document.getElementById('exclusiveUserTexes').value = CONFIG.exclusiveUserTexes && CONFIG.exclusiveUserTexes.length > 0 ? CONFIG.exclusiveUserTexes.join(",") : null;
 
         // 自动抢红包-设置选中的红包类型
         const autoUnpackTypeCheckboxes = document.querySelectorAll('.auto-unpack-redpacket-type');
@@ -2570,6 +2592,11 @@
         if (autoUnpackRedPacketTextMoney && autoUnpackRedPacketTextMoney < 200) {
             autoUnpackRedPacketTextMoney = 200;
         }
+        if (CONFIG.autoUnpackRedPacketTime && CONFIG.autoUnpackRedPacketTime < 3000) {
+            CONFIG.autoUnpackRedPacketTime = 3000;
+        }
+        CONFIG.exclusiveUsers = document.getElementById('exclusiveUsers').value ? document.getElementById('exclusiveUsers').value.split(",") : [];
+        CONFIG.exclusiveUserTexes = document.getElementById('exclusiveUserTexes').value ? document.getElementById('exclusiveUserTexes').value.split(",") : [];
         CONFIG.autoUnpackRedPacketTypes = [];
         document.querySelectorAll('.auto-unpack-redpacket-type:checked').forEach(checkbox => {
             CONFIG.autoUnpackRedPacketTypes.push(checkbox.value);
@@ -2679,7 +2706,9 @@
                 autoUnpackRedPacketExclusiveText: CONFIG.autoUnpackRedPacketExclusiveText,
                 autoUnpackRedPacketTextMoney: CONFIG.autoUnpackRedPacketTextMoney,
                 enableAutoUnpackRedPacketText: CONFIG.enableAutoUnpackRedPacketText,
-                autoUnpackRedPacketTypes: CONFIG.autoUnpackRedPacketTypes
+                autoUnpackRedPacketTypes: CONFIG.autoUnpackRedPacketTypes,
+                exclusiveUsers: CONFIG.exclusiveUsers,
+                exclusiveUserTexes: CONFIG.exclusiveUserTexes,
             };
 
             muliSpecialStorage.setItem('redPacketConfig', JSON.stringify(configToSave));
