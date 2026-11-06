@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.6.5
+// @version      2.7.0
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -49,6 +49,10 @@
 // 2026-04-07 muli （2.6.3） 修复shift + Enter不键入换行问题
 // 2026-04-30 muli （2.6.4） 新增趣味小尾巴自选
 // 2026-05-08 muli （2.6.5） 猜拳红包新增随机手势，只要手势填入’无‘
+// 2026-11-06 muli （2.6.6） 修复猜拳无法改为手动挡的问题；
+// 2026-11-06 muli （2.7.0） 新增语录记事本（消息左下角收藏按钮悬停显示、记事本浮窗点击语录快捷发送、支持手动添加/编辑/删除语录、拖拽记忆位置）；
+// 优化配置编辑器性能（JSON解析防抖、可视化编辑单表单增量同步、面板按需渲染、大JSON改用value渲染）；没有按钮配置时不构建浮窗；
+// 修复可视化编辑子按钮消息参数保存错误的问题；修复编辑器/记事本输入框内回车误触发快捷发送的问题
 
 (function () {
     'use strict';
@@ -70,7 +74,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.6.5";
+    const version_us = "v2.7.0";
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -767,11 +771,69 @@
             showTemporaryHint(`已复读 ${messageInfo.displayName || messageInfo.username} 的消息`);
         });
 
+        // 创建收藏按钮（消息体左下角，悬停消息时显示，收藏到语录记事本；无按钮配置时不显示）
+        let favBtn = null;
+        let updateFavPosition = null;
+        if (FINAL_BUTTONS_CONFIG && FINAL_BUTTONS_CONFIG.length > 0) {
+            favBtn = document.createElement('button');
+            favBtn.className = 'favorite-btn';
+            favBtn.innerHTML = '💗'; // 收藏
+            favBtn.title = '收藏到语录记事本';
+            favBtn.style.cssText = `
+            position: absolute;
+            background: rgba(191, 185, 185, 0.5);
+            border: none;
+            border-radius: 3px;
+            padding: 2px 6px;
+            cursor: pointer;
+            font-size: 12px;
+            z-index: 10;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            pointer-events: auto;
+        `;
+
+            // 更新位置的函数（放在chats__content的左下角外面，与复读按钮对称）
+            updateFavPosition = () => {
+                const contentRect = chatContent.getBoundingClientRect();
+                const itemRect = chatItem.getBoundingClientRect();
+
+                const bottom = itemRect.bottom - contentRect.bottom - 8;
+                const left = contentRect.left - itemRect.left - 10;
+
+                favBtn.style.bottom = `${bottom}px`;
+                favBtn.style.left = `${left}px`;
+            };
+
+            // 鼠标效果（显隐由 .chats__item:hover 的CSS控制）
+            favBtn.addEventListener('mouseenter', () => {
+                favBtn.style.transform = 'scale(1.1)';
+                favBtn.style.background = 'rgba(191, 185, 185, 0.8)';
+            });
+
+            favBtn.addEventListener('mouseleave', () => {
+                favBtn.style.transform = 'scale(1)';
+                favBtn.style.background = 'rgba(191, 185, 185, 0.5)';
+            });
+
+            // 点击收藏到记事本
+            favBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                addQuoteFromMessage(chatContent);
+            });
+        }
+
         // 添加到DOM
         chatItem.appendChild(repeatBtn);
+        if (favBtn) {
+            chatItem.appendChild(favBtn);
+        }
 
         // 初始定位
         requestAnimationFrame(updatePosition);
+        if (updateFavPosition) {
+            requestAnimationFrame(updateFavPosition);
+        }
 
         // 标记已添加
         chatItem.classList.add('repeat-btn-added');
@@ -779,14 +841,16 @@
         // 监听变化重新定位
         const resizeObserver = new ResizeObserver(() => {
             requestAnimationFrame(updatePosition);
+            if (updateFavPosition) {
+                requestAnimationFrame(updateFavPosition);
+            }
         });
 
         resizeObserver.observe(chatItem);
         resizeObserver.observe(chatContent);
     }
 
-    // 为所有聊天项添加按钮
-    document.querySelectorAll('.chats__item').forEach(addRepeatButtonOptimized);
+    // 为所有聊天项添加按钮（移至init()中，待配置加载完成后执行）
 
     // 监听新聊天项
     const observer = new MutationObserver((mutations) => {
@@ -1333,7 +1397,7 @@
             muliShowToast("拜托🙏先选一下红包类型好吗~");
             return;
         }
-        if (msg.gesture && msg.gesture !== '无') {
+        if (msg.gesture && msg.gesture !== '无' && msg.gesture !== '-') {
             if (msg.gesture == '石头') {
                 msg.gesture = '0';
             } else if (msg.gesture == '剪刀') {
@@ -1537,6 +1601,11 @@
     const sendButton = document.querySelector('.green');
     if (sendButton) {
         document.addEventListener('keydown', function (event) {
+            // 在配置编辑器/语录记事本的输入框内，回车不触发快捷发送（保留正常输入/换行）
+            if (event.target && event.target.closest &&
+                event.target.closest('#config-editor, #muli-notepad')) {
+                return;
+            }
             if (event.key === 'Enter' && event.shiftKey) {
                 // event.preventDefault();
                 // sendButton.click();
@@ -3160,6 +3229,7 @@
                 if (!e.target.classList.contains('cr-btn') &&
                     !e.target.classList.contains('sub-btn') &&
                     e.target.id !== 'goToTopMuLi' &&
+                    e.target.id !== 'notepadMuLi' &&
                     !e.target.closest('.cr-btn') &&
                     !e.target.closest('.sub-btn')) {
                     this.startDrag(e);
@@ -3371,6 +3441,20 @@
     ];
 
 
+    // 编辑器同步状态标记（性能优化：避免每次按键都全量序列化/反序列化）
+    let jsonValidateTimer = null;
+    let jsonStale = false;   // JSON文本落后于activeConfig（可视化侧有改动）
+    let visualStale = false; // 可视化表单落后于activeConfig（JSON侧有改动）
+
+    // 立即执行尚未触发的JSON解析（切换tab/保存前调用）
+    function flushJsonValidate() {
+        if (jsonValidateTimer) {
+            clearTimeout(jsonValidateTimer);
+            jsonValidateTimer = null;
+            validateJson();
+        }
+    }
+
     function createEditButton() {
         const editBtn = document.createElement('div');
         editBtn.id = 'edit-quick-actions';
@@ -3399,6 +3483,9 @@
         editor.id = 'config-editor';
 
         activeConfig = JSON.parse(JSON.stringify(FINAL_BUTTONS_CONFIG));
+        // 打开编辑器：JSON文本已同步，可视化表单待渲染
+        jsonStale = false;
+        visualStale = true;
 
         const header = document.createElement('div');
         header.className = 'editor-header';
@@ -3465,6 +3552,7 @@
     }
 
     function closeEditor() {
+        flushJsonValidate();
         const editor = document.getElementById('config-editor');
         const overlay = document.getElementById('editor-overlay');
 
@@ -3516,9 +3604,18 @@
                     ">导入配置</button>
                 </div>
             </div>
-            <textarea id="json-editor">${ConfigSerializer.serialize(activeConfig)}</textarea>
-            <div id="json-error" class="json-error"></div>
         `;
+
+        // 大JSON使用 value 赋值渲染，避免 innerHTML 解析大文本卡顿或内容中的尖括号破坏结构
+        const jsonEditor = document.createElement('textarea');
+        jsonEditor.id = 'json-editor';
+        jsonEditor.value = ConfigSerializer.serialize(activeConfig);
+        area.appendChild(jsonEditor);
+
+        const errorDiv = document.createElement('div');
+        errorDiv.id = 'json-error';
+        errorDiv.className = 'json-error';
+        area.appendChild(errorDiv);
 
         pane.appendChild(area);
         return pane;
@@ -3580,6 +3677,9 @@
             tab.addEventListener('click', () => {
                 const tabName = tab.dataset.tab;
 
+                // 离开JSON页前，把未生效的解析立即刷入activeConfig
+                flushJsonValidate();
+
                 document.querySelectorAll('.editor-tab').forEach(t => {
                     t.classList.remove('active');
                 });
@@ -3590,8 +3690,16 @@
                 });
                 document.getElementById(`${tabName}-pane`).classList.add('active');
 
-                if (tabName === 'visual') {
-                    updateVisualEditor();
+                // 各面板按需渲染，避免打开编辑器时一次性构建全部内容卡顿
+                if (tabName === 'json') {
+                    // 可视化侧有改动才重写文本，保留用户手动编辑的格式
+                    if (jsonStale) {
+                        updateJsonEditor();
+                    }
+                } else if (tabName === 'visual') {
+                    if (visualStale) {
+                        updateVisualEditor();
+                    }
                 } else if (tabName === 'preview') {
                     updatePreview();
                 }
@@ -3599,7 +3707,14 @@
         });
 
         document.getElementById('format-json').addEventListener('click', formatJson);
-        document.getElementById('json-editor').addEventListener('input', validateJson);
+        document.getElementById('json-editor').addEventListener('input', () => {
+            // 防抖解析：大JSON每敲一个字都全量parse会严重卡顿
+            clearTimeout(jsonValidateTimer);
+            jsonValidateTimer = setTimeout(() => {
+                jsonValidateTimer = null;
+                validateJson();
+            }, 300);
+        });
         document.getElementById('add-button').addEventListener('click', () => addButtonForm());
         document.getElementById('save-config').addEventListener('click', saveConfig);
         document.getElementById('reset-config').addEventListener('click', resetConfig);
@@ -3613,9 +3728,6 @@
             input.addEventListener('change', handleImportConfig);
             input.click();
         });
-
-        updateVisualEditor();
-        updatePreview();
     }
 
     function formatJson() {
@@ -3629,6 +3741,7 @@
             errorDiv.className = 'json-error success';
 
             activeConfig = ConfigSerializer.deserialize(editor.value);
+            visualStale = true;
         } catch (e) {
             errorDiv.textContent = 'JSON格式错误: ' + e.message;
             errorDiv.className = 'json-error error';
@@ -3638,13 +3751,14 @@
     function validateJson() {
         const editor = document.getElementById('json-editor');
         const errorDiv = document.getElementById('json-error');
+        if (!editor) return;
 
         try {
-            JSON.parse(editor.value);
+            // 一次parse即完成校验与反序列化，避免重复解析大JSON
+            activeConfig = ConfigSerializer.deserialize(editor.value);
+            visualStale = true;
             errorDiv.textContent = '';
             errorDiv.className = 'json-error';
-
-            activeConfig = ConfigSerializer.deserialize(editor.value);
         } catch (e) {
             errorDiv.textContent = 'JSON格式错误: ' + e.message;
             errorDiv.className = 'json-error error';
@@ -3657,9 +3771,12 @@
 
         buttonsList.innerHTML = '';
 
+        // 使用DocumentFragment批量插入，减少重排
+        const fragment = document.createDocumentFragment();
         activeConfig.forEach((button, index) => {
-            buttonsList.appendChild(createButtonForm(button, index));
+            fragment.appendChild(createButtonForm(button, index));
         });
+        buttonsList.appendChild(fragment);
 
         if (activeConfig.length === 0) {
             buttonsList.innerHTML = `
@@ -3669,6 +3786,8 @@
                 </div>
             `;
         }
+
+        visualStale = false;
     }
     //新增按钮
     function createButtonForm(button, index) {
@@ -3977,9 +4096,13 @@
         });
 
         childForm.querySelector('.remove-child-btn').addEventListener('click', () => {
+            // 先取父表单再移除，移除后closest将找不到父级
+            const parentForm = childForm.closest('.muli-button-form');
             childForm.remove();
-            //保存可视化编辑
-            collectVisualEditorData();
+            //保存可视化编辑（只同步当前表单）
+            if (parentForm) {
+                syncFormToConfig(parentForm);
+            }
             if (container.children.length === 0) {
                 container.innerHTML = '<div class="no-children">暂无子按钮，点击上方按钮添加</div>';
             }
@@ -4101,8 +4224,6 @@
                 updateVisualEditor();
                 updatePreview();
                 updateJsonEditor();
-                //保存可视化编辑
-                collectVisualEditorData();
             }
         });
 
@@ -4130,109 +4251,6 @@
         });
 
 
-    }
-
-    function handleFormChange(form, index, changedElement) {
-        // 实时更新 activeConfig
-        if (!activeConfig[index]) return;
-
-        const formData = new FormData(form);
-        const buttonData = {};
-
-        form.querySelectorAll('input, select, textarea').forEach(element => {
-            if (element.name) {
-                if (element.type === 'checkbox' || element.type === 'radio') {
-                    buttonData[element.name] = element.checked;
-                } else {
-                    buttonData[element.name] = element.value;
-                }
-            }
-        });
-
-        // 更新按钮数据
-        activeConfig[index].text = buttonData.text || '';
-        activeConfig[index].color = buttonData.color || 'btn-blue';
-
-        if (buttonData.cooldown && !isNaN(buttonData.cooldown) && parseInt(buttonData.cooldown) > 0) {
-            activeConfig[index].cooldown = parseInt(buttonData.cooldown);
-        } else {
-            delete activeConfig[index].cooldown;
-        }
-
-        if (buttonData.muliRefresh) {
-            activeConfig[index].muliRefresh = buttonData.muliRefresh === 'true' ? true : buttonData.muliRefresh;
-        } else {
-            delete activeConfig[index].muliRefresh;
-        }
-
-        // 更新动作
-        const actionType = buttonData.actionType;
-        if (actionType) {
-            activeConfig[index].action = { type: actionType };
-
-            const params = {};
-            form.querySelectorAll('.action-params input, .action-params textarea').forEach(element => {
-                const name = element.name.replace('action_', '');
-                params[name] = element.value;
-            });
-
-            if ((actionType === 'sendMsg' || actionType === 'sendIconTextMsg') && params.message) {
-                activeConfig[index].action.params = params.message;
-            } else if (actionType === 'muliRefreshPage') {
-                activeConfig[index].action.params = params.message || null;
-                if (params.delay) {
-                    activeConfig[index].action.params = [params.message || null, parseInt(params.delay) || 100];
-                }
-            } else if (Object.keys(params).length > 0) {
-                activeConfig[index].action.params = params;
-            }
-        }
-
-        // 更新子按钮
-        const childForms = form.querySelectorAll('.child-button-form');
-        if (childForms.length > 0) {
-            activeConfig[index].children = [];
-
-            childForms.forEach(childForm => {
-                const childData = {};
-                const childText = childForm.querySelector('[name="text"]')?.value;
-                if (!childText?.trim()) return;
-
-                childData.text = childText;
-
-                const childActionType = childForm.querySelector('[name="actionType"]')?.value || 'sendMsg';
-                childData.action = { type: childActionType };
-
-                const childCooldown = childForm.querySelector('[name="cooldown"]')?.value;
-                if (childCooldown && !isNaN(childCooldown) && parseInt(childCooldown) > 0) {
-                    childData.cooldown = parseInt(childCooldown);
-                }
-
-                const childRefresh = childForm.querySelector('[name="muliRefresh"]')?.value;
-                if (childRefresh) {
-                    childData.muliRefresh = childRefresh === 'true' ? true : childRefresh;
-                }
-
-                const childParams = {};
-                childForm.querySelectorAll('.action-params input, .action-params textarea').forEach(element => {
-                    const name = element.name.replace('action_', '');
-                    childParams[name] = element.value;
-                });
-
-                if ((childCooldown === 'sendMsg' || childCooldown === 'sendIconTextMsg') && childParams.message) {
-                    childData.action.params = childParams.message;
-                } else if (Object.keys(childParams).length > 0) {
-                    childData.action.params = childParams;
-                }
-
-                activeConfig[index].children.push(childData);
-            });
-        } else {
-            delete activeConfig[index].children;
-        }
-
-        // 更新JSON编辑器
-        updateJsonEditor();
     }
 
     function addButtonForm() {
@@ -4315,15 +4333,39 @@
         const editor = document.getElementById('json-editor');
         if (editor) {
             editor.value = ConfigSerializer.serialize(activeConfig);
-            validateJson();
+            jsonStale = false;
+            const errorDiv = document.getElementById('json-error');
+            if (errorDiv) {
+                errorDiv.textContent = '';
+                errorDiv.className = 'json-error';
+            }
         }
     }
     // 保存配置
     async function saveConfig() {
         try {
+            // 先把JSON页未生效的解析刷入activeConfig
+            flushJsonValidate();
+
             // 验证配置
             if (!Array.isArray(activeConfig)) {
                 throw new Error('配置必须是数组格式');
+            }
+
+            // 按钮/子按钮文本必填校验
+            for (let i = 0; i < activeConfig.length; i++) {
+                const btn = activeConfig[i];
+                if (!btn.text || !btn.text.trim()) {
+                    throw new Error(`按钮 ${i + 1}: 按钮文本不能为空`);
+                }
+                if (btn.children) {
+                    for (let j = 0; j < btn.children.length; j++) {
+                        const child = btn.children[j];
+                        if (!child.text || !child.text.trim()) {
+                            throw new Error(`按钮 ${i + 1} 的子按钮 ${j + 1}: 文本不能为空`);
+                        }
+                    }
+                }
             }
 
             // 使用 ConfigSerializer 序列化配置
@@ -4356,6 +4398,7 @@
     }
 
     function exportConfig() {
+        flushJsonValidate();
         const jsonString = ConfigSerializer.serialize(activeConfig);
         const blob = new Blob([jsonString], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -4423,6 +4466,568 @@
             }, 300);
         }, 3000);
     }
+
+    // ================== 语录记事本 ==================
+    const NOTEPAD_STORAGE_KEY = 'fishpi_notepad_quotes';
+    const NOTEPAD_POS_KEY = 'fishpi_notepad_position';
+    // 语录列表 [{id, title, content, author, time}]
+    let notepadQuotes = loadNotepadQuotes();
+    let notepadFormMode = 'add'; // add | edit
+    let editingQuoteId = null;
+
+    // 读取语录列表
+    function loadNotepadQuotes() {
+        try {
+            const raw = muliSpecialStorage.getItem(NOTEPAD_STORAGE_KEY);
+            const list = raw ? JSON.parse(raw) : [];
+            return Array.isArray(list) ? list : [];
+        } catch (e) {
+            console.warn('读取语录记事本失败:', e);
+            return [];
+        }
+    }
+
+    // 保存语录列表
+    function saveNotepadQuotes() {
+        muliSpecialStorage.setItem(NOTEPAD_STORAGE_KEY, JSON.stringify(notepadQuotes));
+    }
+
+    // 从内容自动截取标题（去掉markdown符号，取前15字）
+    function makeAutoTitle(content) {
+        const plain = String(content)
+            .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')  // 图片保留说明文字
+            .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')   // 链接保留文字
+            .replace(/^[>\s#*]+/gm, '')                 // 引用/标题/加粗符号
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (!plain) return '语录';
+        return plain.length > 15 ? plain.slice(0, 15) + '…' : plain;
+    }
+
+    // 收藏消息到记事本（弹出输入标题，为空自动截取内容）
+    function addQuoteFromMessage(chatContent) {
+        const messageHTML = extractMessageHTML(chatContent);
+        if (!messageHTML) {
+            showTemporaryHint('无法提取消息内容');
+            return;
+        }
+        const content = htmlToMarkdownQuote(messageHTML).trim();
+        if (!content) {
+            showTemporaryHint('消息内容为空，无法收藏');
+            return;
+        }
+
+        // 同内容不重复收藏
+        if (notepadQuotes.some(q => q.content === content)) {
+            showTemporaryHint('该语录已在记事本中');
+            return;
+        }
+
+        let title = prompt('请输入语录标题（留空自动截取内容）', '');
+        if (title === null) return; // 取消则不收藏
+        title = title.trim() || makeAutoTitle(content);
+
+        const messageInfo = extractMessageInfo(chatContent);
+        notepadQuotes.push({
+            id: 'q_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+            title: title,
+            content: content,
+            author: (messageInfo && (messageInfo.displayName || messageInfo.username)) || '',
+            time: Date.now()
+        });
+        saveNotepadQuotes();
+        renderNotepadList();
+        showTemporaryHint(`已收藏到记事本：${title}`);
+    }
+
+    // 快捷发送语录
+    function sendQuote(quote) {
+        sendMsg(quote.content).catch(() => {});
+        showTemporaryHint(`已发送语录：${quote.title}`);
+    }
+
+    // 打开/收起记事本浮窗
+    function toggleNotepad() {
+        const panel = document.getElementById('muli-notepad');
+        if (panel) {
+            panel.remove();
+            return;
+        }
+        createNotepadWindow();
+    }
+
+    // 创建记事本浮窗
+    function createNotepadWindow() {
+        const panel = document.createElement('div');
+        panel.id = 'muli-notepad';
+
+        panel.innerHTML = `
+            <div class="notepad-header" id="notepad-drag-handle">
+                <span>📒 语录记事本</span>
+                <div class="notepad-header-btns">
+                    <button id="notepad-add-btn" title="添加语录">＋</button>
+                    <button id="notepad-close-btn" title="关闭">×</button>
+                </div>
+            </div>
+            <div class="notepad-form" id="notepad-form" style="display: none;">
+                <input type="text" id="notepad-form-title" placeholder="语录标题（留空自动截取内容）">
+                <textarea id="notepad-form-content" rows="3" placeholder="语录内容"></textarea>
+                <div class="notepad-form-btns">
+                    <button id="notepad-form-save">保存</button>
+                    <button id="notepad-form-cancel">取消</button>
+                </div>
+            </div>
+            <div class="notepad-list" id="notepad-list"></div>
+        `;
+
+        document.body.appendChild(panel);
+        applyNotepadPosition(panel);
+        makeNotepadDraggable(panel);
+        renderNotepadList();
+
+        panel.querySelector('#notepad-close-btn').addEventListener('click', () => panel.remove());
+        panel.querySelector('#notepad-add-btn').addEventListener('click', () => openNotepadForm('add'));
+        panel.querySelector('#notepad-form-save').addEventListener('click', saveNotepadForm);
+        panel.querySelector('#notepad-form-cancel').addEventListener('click', closeNotepadForm);
+    }
+
+    // 渲染语录列表
+    function renderNotepadList() {
+        const list = document.getElementById('notepad-list');
+        if (!list) return;
+        list.innerHTML = '';
+
+        if (notepadQuotes.length === 0) {
+            list.innerHTML = '<div class="notepad-empty">暂无语录<br>鼠标悬停消息后点击 💗 收藏<br>或点右上角 ＋ 手动添加</div>';
+            return;
+        }
+
+        notepadQuotes.forEach(quote => {
+            const item = document.createElement('div');
+            item.className = 'notepad-item';
+
+            const main = document.createElement('div');
+            main.className = 'notepad-item-main';
+            main.title = '点击发送这条语录';
+
+            const titleEl = document.createElement('div');
+            titleEl.className = 'notepad-item-title';
+            titleEl.textContent = quote.title;
+
+            const preview = document.createElement('div');
+            preview.className = 'notepad-item-preview';
+            preview.textContent = String(quote.content).replace(/\s+/g, ' ');
+
+            const meta = document.createElement('div');
+            meta.className = 'notepad-item-meta';
+            meta.textContent = (quote.author ? `来自 ${quote.author} · ` : '手动添加 · ') + formatNotepadTime(quote.time);
+
+            main.appendChild(titleEl);
+            main.appendChild(preview);
+            main.appendChild(meta);
+            // 点击语录快捷发送
+            main.addEventListener('click', () => sendQuote(quote));
+
+            const ops = document.createElement('div');
+            ops.className = 'notepad-item-ops';
+
+            const editBtn = document.createElement('button');
+            editBtn.textContent = '✎';
+            editBtn.title = '编辑';
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openNotepadForm('edit', quote.id);
+            });
+
+            const delBtn = document.createElement('button');
+            delBtn.textContent = '🗑';
+            delBtn.title = '删除';
+            delBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (confirm(`确定删除语录「${quote.title}」吗？`)) {
+                    notepadQuotes = notepadQuotes.filter(q => q.id !== quote.id);
+                    saveNotepadQuotes();
+                    renderNotepadList();
+                    showTemporaryHint('语录已删除');
+                }
+            });
+
+            ops.appendChild(editBtn);
+            ops.appendChild(delBtn);
+
+            item.appendChild(main);
+            item.appendChild(ops);
+            list.appendChild(item);
+        });
+    }
+
+    // 格式化语录时间
+    function formatNotepadTime(time) {
+        try {
+            const d = new Date(time);
+            const pad = n => String(n).padStart(2, '0');
+            return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    // 打开添加/编辑表单
+    function openNotepadForm(mode, id) {
+        notepadFormMode = mode;
+        editingQuoteId = id || null;
+
+        const form = document.getElementById('notepad-form');
+        const titleInput = document.getElementById('notepad-form-title');
+        const contentInput = document.getElementById('notepad-form-content');
+        if (!form || !titleInput || !contentInput) return;
+
+        if (mode === 'edit') {
+            const quote = notepadQuotes.find(q => q.id === id);
+            if (!quote) return;
+            titleInput.value = quote.title;
+            contentInput.value = quote.content;
+        } else {
+            titleInput.value = '';
+            contentInput.value = '';
+        }
+        form.style.display = 'flex';
+    }
+
+    // 关闭添加/编辑表单
+    function closeNotepadForm() {
+        const form = document.getElementById('notepad-form');
+        if (form) form.style.display = 'none';
+        notepadFormMode = 'add';
+        editingQuoteId = null;
+    }
+
+    // 保存添加/编辑的语录
+    function saveNotepadForm() {
+        const titleInput = document.getElementById('notepad-form-title');
+        const contentInput = document.getElementById('notepad-form-content');
+        const content = contentInput.value.trim();
+        if (!content) {
+            showTemporaryHint('语录内容不能为空');
+            return;
+        }
+        const isEdit = notepadFormMode === 'edit' && editingQuoteId;
+        const title = titleInput.value.trim() || makeAutoTitle(content);
+
+        if (isEdit) {
+            const quote = notepadQuotes.find(q => q.id === editingQuoteId);
+            if (quote) {
+                quote.title = title;
+                quote.content = content;
+            }
+        } else {
+            notepadQuotes.push({
+                id: 'q_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+                title: title,
+                content: content,
+                author: '',
+                time: Date.now()
+            });
+        }
+
+        saveNotepadQuotes();
+        closeNotepadForm();
+        renderNotepadList();
+        showTemporaryHint(isEdit ? '语录已更新' : '语录已添加');
+    }
+
+    // 应用记事本浮窗位置（优先使用记忆位置，默认在记事本按钮旁弹出）
+    function applyNotepadPosition(panel) {
+        try {
+            const saved = muliSpecialStorage.getItem(NOTEPAD_POS_KEY);
+            if (saved) {
+                const pos = JSON.parse(saved);
+                if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
+                    panel.style.left = pos.left + 'px';
+                    panel.style.top = pos.top + 'px';
+                    return;
+                }
+            }
+        } catch (e) {}
+
+        // 默认定位到记事本按钮附近
+        const btn = document.getElementById('notepadMuLi');
+        if (btn) {
+            const rect = btn.getBoundingClientRect();
+            panel.style.left = Math.min(Math.max(10, rect.left - 280), Math.max(10, window.innerWidth - 330)) + 'px';
+            panel.style.top = Math.min(Math.max(10, rect.bottom + 10), Math.max(10, window.innerHeight - 300)) + 'px';
+        } else {
+            panel.style.left = '20px';
+            panel.style.top = Math.max(20, window.innerHeight - 420) + 'px';
+        }
+    }
+
+    // 保存记事本浮窗位置
+    function saveNotepadPosition(panel) {
+        muliSpecialStorage.setItem(NOTEPAD_POS_KEY, JSON.stringify({
+            left: parseInt(panel.style.left) || 0,
+            top: parseInt(panel.style.top) || 0
+        }));
+    }
+
+    // 记事本浮窗拖拽（标题栏拖动，位置记忆）
+    function makeNotepadDraggable(panel) {
+        const handle = panel.querySelector('#notepad-drag-handle');
+        if (!handle) return;
+
+        let dragging = false;
+        let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+        handle.addEventListener('mousedown', (e) => {
+            if (e.target.closest('button')) return;
+            dragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = panel.offsetLeft;
+            startTop = panel.offsetTop;
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            panel.style.left = Math.max(0, startLeft + e.clientX - startX) + 'px';
+            panel.style.top = Math.max(0, startTop + e.clientY - startY) + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false;
+            saveNotepadPosition(panel);
+        });
+    }
+
+    // 记事本相关样式
+    GM_addStyle(`
+    #notepadMuLi {
+        position: absolute !important;
+        bottom: -10px !important;
+        left: -10px !important;
+        width: 25px !important;
+        height: 25px !important;
+        border-radius: 50% !important;
+        background: linear-gradient(135deg, #f59f00 0%, #e8590c 100%) !important;
+        color: white !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 13px !important;
+        cursor: pointer !important;
+        box-shadow: 0 4px 15px rgba(232, 89, 12, 0.4) !important;
+        border: 3px solid white !important;
+        z-index: 10000 !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+
+    #notepadMuLi:hover {
+        transform: scale(1.15) !important;
+        box-shadow: 0 6px 20px rgba(232, 89, 12, 0.6) !important;
+        background: linear-gradient(135deg, #e8590c 0%, #f59f00 100%) !important;
+    }
+
+    /* 收藏按钮默认隐藏，鼠标悬停消息体时才显示 */
+    .favorite-btn {
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.2s, transform 0.2s, background 0.2s, visibility 0.2s;
+    }
+
+    .chats__item:hover .favorite-btn {
+        opacity: 0.7;
+        visibility: visible;
+    }
+
+    .chats__item:hover .favorite-btn:hover {
+        opacity: 1;
+    }
+
+    .favorite-btn:hover {
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2) !important;
+    }
+
+    #muli-notepad {
+        position: fixed;
+        width: 320px;
+        max-height: 480px;
+        background: rgba(255, 255, 255, 0.98);
+        border: 1px solid #eee;
+        border-radius: 10px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+        z-index: 10050;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        font-size: 13px;
+    }
+
+    .notepad-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px;
+        background: linear-gradient(to right, #f59f00, #e8590c);
+        color: white;
+        font-weight: bold;
+        cursor: move;
+        user-select: none;
+    }
+
+    .notepad-header-btns {
+        display: flex;
+        gap: 6px;
+    }
+
+    .notepad-header-btns button {
+        width: 22px;
+        height: 22px;
+        border: none;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.25);
+        color: white;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 22px;
+        padding: 0;
+    }
+
+    .notepad-header-btns button:hover {
+        background: rgba(255, 255, 255, 0.45);
+    }
+
+    .notepad-form {
+        padding: 10px 12px;
+        border-bottom: 1px solid #eee;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .notepad-form input,
+    .notepad-form textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 6px 8px;
+        font-size: 13px;
+        font-family: inherit;
+        outline: none;
+        resize: vertical;
+    }
+
+    .notepad-form input:focus,
+    .notepad-form textarea:focus {
+        border-color: #f59f00;
+    }
+
+    .notepad-form-btns {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+    }
+
+    .notepad-form-btns button {
+        padding: 5px 14px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 12px;
+        color: white;
+    }
+
+    #notepad-form-save {
+        background: #51cf66;
+    }
+
+    #notepad-form-cancel {
+        background: #adb5bd;
+    }
+
+    .notepad-list {
+        flex: 1;
+        overflow-y: auto;
+        max-height: 360px;
+        padding: 8px;
+    }
+
+    .notepad-empty {
+        text-align: center;
+        color: #adb5bd;
+        padding: 30px 10px;
+        font-size: 12px;
+        line-height: 1.8;
+    }
+
+    .notepad-item {
+        display: flex;
+        align-items: stretch;
+        gap: 6px;
+        border: 1px solid #eee;
+        border-radius: 6px;
+        margin-bottom: 8px;
+        overflow: hidden;
+        background: #fff;
+    }
+
+    .notepad-item-main {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 10px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+
+    .notepad-item-main:hover {
+        background: #fff4e6;
+    }
+
+    .notepad-item-title {
+        font-weight: bold;
+        color: #343a40;
+        margin-bottom: 3px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .notepad-item-preview {
+        color: #868e96;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-bottom: 3px;
+    }
+
+    .notepad-item-meta {
+        color: #adb5bd;
+        font-size: 11px;
+    }
+
+    .notepad-item-ops {
+        display: flex;
+        flex-direction: column;
+        border-left: 1px solid #eee;
+    }
+
+    .notepad-item-ops button {
+        flex: 1;
+        border: none;
+        background: #f8f9fa;
+        cursor: pointer;
+        font-size: 12px;
+        color: #868e96;
+        padding: 4px 8px;
+    }
+
+    .notepad-item-ops button:hover {
+        background: #e9ecef;
+        color: #495057;
+    }
+    `);
 
     // ================== 初始化 ==================
     const DOCK_PREF_KEY = 'fishpi_quick_actions_docked';
@@ -4566,6 +5171,16 @@
             muliSpecialStorage.setItem(CONFIG_STORAGE_KEY, ConfigSerializer.serialize(FINAL_BUTTONS_CONFIG));
         }
 
+        // 为已有聊天项添加复读/收藏按钮（需在配置加载完成后执行，收藏按钮依赖按钮配置）
+        document.querySelectorAll('.chats__item').forEach(addRepeatButtonOptimized);
+
+        // 没有任何按钮配置时不构建浮窗（回到顶部、停靠切换、记事本入口都挂在浮窗上，一并不显示）
+        if (!FINAL_BUTTONS_CONFIG || FINAL_BUTTONS_CONFIG.length === 0) {
+            createEditButton();
+            removeTipsModule();
+            return;
+        }
+
         // 创建按钮容器
         const container = document.createElement('div');
         container.id = 'quick-actions';
@@ -4617,6 +5232,17 @@
         };
         container.appendChild(dockToggleBtn);
 
+        // 创建记事本按钮（容器左下角）
+        const notepadBtn = document.createElement('div');
+        notepadBtn.id = 'notepadMuLi';
+        notepadBtn.title = '语录记事本';
+        notepadBtn.innerHTML = '📒';
+        notepadBtn.onclick = (e) => {
+            e.stopPropagation();
+            toggleNotepad();
+        };
+        container.appendChild(notepadBtn);
+
         // 初始化拖拽管理器
         const dragManager = new DragManager(container);
         container.dragManager = dragManager;
@@ -4652,8 +5278,8 @@
         // 检查事件是否发生在 .muli-button-form 内的输入元素
         const buttonForm = target.closest('.muli-button-form');
         if (buttonForm) {
-            //保存可视化编辑
-            collectVisualEditorData();
+            //保存可视化编辑（只同步被修改的单个表单，避免每敲一个字全表扫描）
+            syncFormToConfig(buttonForm);
         }
     });
 
@@ -4662,191 +5288,189 @@
         const target = event.target;
         const buttonForm = target.closest('.muli-button-form');
         if (buttonForm) {
-            //保存可视化编辑
-            collectVisualEditorData();
+            //保存可视化编辑（只同步被修改的单个表单）
+            syncFormToConfig(buttonForm);
         }
     });
 
+    // 把单个按钮表单的当前值同步到 activeConfig
+    function syncFormToConfig(form) {
+        if (!form) return;
+        const index = parseInt(form.dataset.index, 10);
+        if (isNaN(index) || !activeConfig[index]) return;
+        activeConfig[index] = collectFormData(form);
+        // JSON文本已落后于activeConfig，待切回JSON页时刷新
+        jsonStale = true;
+    }
+
     // 从可视化编辑器收集数据
-    function collectVisualEditorData() {
-        const forms = document.querySelectorAll('.muli-button-form');
-        const newConfig = [];
+    function collectFormData(form) {
+        const buttonData = {};
 
-        forms.forEach((form, index) => {
-            const buttonData = {};
+        // 基本设置
+        const text = form.querySelector('[name="text"]').value;
+        buttonData.text = text;
+        buttonData.color = form.querySelector('[name="color"]').value;
 
-            // 基本设置
-            const text = form.querySelector('[name="text"]').value;
-            if (!text.trim()) {
-                throw new Error(`按钮 ${index + 1}: 按钮文本不能为空`);
-            }
-            buttonData.text = text;
-            buttonData.color = form.querySelector('[name="color"]').value;
+        const cooldown = form.querySelector('[name="cooldown"]').value;
+        if (cooldown && !isNaN(cooldown) && parseInt(cooldown) > 0) {
+            buttonData.cooldown = parseInt(cooldown);
+        }
 
-            const cooldown = form.querySelector('[name="cooldown"]').value;
-            if (cooldown && !isNaN(cooldown) && parseInt(cooldown) > 0) {
-                buttonData.cooldown = parseInt(cooldown);
-            }
+        const cooldownChildren = form.querySelector('[name="cooldownChildren"]').value;
+        if (cooldownChildren) {
+            buttonData.cooldownChildren = cooldownChildren === 'true' ? true : cooldownChildren;
+        }
 
-            const cooldownChildren = form.querySelector('[name="cooldownChildren"]').value;
-            if (cooldownChildren) {
-                buttonData.cooldownChildren = cooldownChildren === 'true' ? true : cooldownChildren;
-            }
+        const refreshValue = form.querySelector('[name="muliRefresh"]').value;
+        if (refreshValue) {
+            buttonData.muliRefresh = refreshValue === 'true' ? true : refreshValue;
+        }
 
-            const refreshValue = form.querySelector('[name="muliRefresh"]').value;
-            if (refreshValue) {
-                buttonData.muliRefresh = refreshValue === 'true' ? true : refreshValue;
-            }
-
-            // 动作设置
-            const actionType = form.querySelector('[name="actionType"]').value;
-            buttonData.action = {};
-            buttonData.action.type = actionType;
-            if (actionType && ACTION_TEMPLATES[actionType]) {
-                // 这里简化处理，实际应该根据模板生成代码
-                if (actionType === 'sendMsg') {
-                    var message = form.querySelector('[name="action_message"]')?.value;
-                    var messages = message.split(',');
-                    if (messages.length > 1) {
-                        buttonData.action.params = messages;
-                    } else {
-                        buttonData.action.params = message;
-                    }
-                    var delay = form.querySelector('[name="action_delay"]')?.value;
-                    if (!delay) {
-                        delay = 0;
-                    }
-                    buttonData.action.delay = delay;
-                } else if (actionType === 'sendIconTextMsg') {
-                    var message = form.querySelector('[name="action_message"]')?.value;
+        // 动作设置
+        const actionType = form.querySelector('[name="actionType"]').value;
+        buttonData.action = {};
+        buttonData.action.type = actionType;
+        if (actionType && ACTION_TEMPLATES[actionType]) {
+            // 这里简化处理，实际应该根据模板生成代码
+            if (actionType === 'sendMsg') {
+                var message = form.querySelector('[name="action_message"]')?.value;
+                var messages = message.split(',');
+                if (messages.length > 1) {
+                    buttonData.action.params = messages;
+                } else {
                     buttonData.action.params = message;
-                } else if (actionType === 'promptAndSend') {
-                    const promptText = form.querySelector('[name="action_promptText"]')?.value;
-                    const defaultValue = form.querySelector('[name="action_defaultValue"]')?.value;
-                    const actionCode = form.querySelector('[name="action_actionCode"]')?.value;
-                    buttonData.action.params = {};
-                    buttonData.action.params.promptText = promptText;
-                    buttonData.action.params.defaultValue = defaultValue;
-                    buttonData.action.params.actionCode = actionCode;
-                } else if (actionType === 'fetchPrivate') {
-                    var message = form.querySelector('[name="action_endpoint"]')?.value;
-                    var messages = message.split(',');
-                    if (messages.length > 1) {
-                        buttonData.action.params = messages;
-                    } else {
-                        buttonData.action.params = message;
-                    }
-                } else if (actionType === 'promptAndIconTextMsg') {
-                    const defaultValue = form.querySelector('[name="action_defaultValue"]')?.value;
-                    buttonData.action.params = {};
-                    buttonData.action.params.defaultValue = defaultValue;
-                } else if (actionType === 'sendRedPacketMsg') {
-                    const type = form.querySelector('[name="action_type"]')?.value;
-                    const money = form.querySelector('[name="action_money"]')?.value;
-                    const count = form.querySelector('[name="action_count"]')?.value;
-                    const msg = form.querySelector('[name="action_msg"]')?.value;
-                    const recivers = form.querySelector('[name="action_recivers"]')?.value;
-                    const gesture = form.querySelector('[name="action_gesture"]')?.value;
-                    buttonData.action.params = {};
-                    buttonData.action.params.type = type;
-                    buttonData.action.params.money = money;
-                    buttonData.action.params.count = count;
-                    buttonData.action.params.msg = msg;
-                    buttonData.action.params.recivers = recivers == null ? [] : recivers.split(",");
-                    buttonData.action.params.gesture = gesture;
                 }
+                var delay = form.querySelector('[name="action_delay"]')?.value;
+                if (!delay) {
+                    delay = 0;
+                }
+                buttonData.action.delay = delay;
+            } else if (actionType === 'sendIconTextMsg') {
+                var message = form.querySelector('[name="action_message"]')?.value;
+                buttonData.action.params = message;
+            } else if (actionType === 'promptAndSend') {
+                const promptText = form.querySelector('[name="action_promptText"]')?.value;
+                const defaultValue = form.querySelector('[name="action_defaultValue"]')?.value;
+                const actionCode = form.querySelector('[name="action_actionCode"]')?.value;
+                buttonData.action.params = {};
+                buttonData.action.params.promptText = promptText;
+                buttonData.action.params.defaultValue = defaultValue;
+                buttonData.action.params.actionCode = actionCode;
+            } else if (actionType === 'fetchPrivate') {
+                var message = form.querySelector('[name="action_endpoint"]')?.value;
+                var messages = message.split(',');
+                if (messages.length > 1) {
+                    buttonData.action.params = messages;
+                } else {
+                    buttonData.action.params = message;
+                }
+            } else if (actionType === 'promptAndIconTextMsg') {
+                const defaultValue = form.querySelector('[name="action_defaultValue"]')?.value;
+                buttonData.action.params = {};
+                buttonData.action.params.defaultValue = defaultValue;
+            } else if (actionType === 'sendRedPacketMsg') {
+                const type = form.querySelector('[name="action_type"]')?.value;
+                const money = form.querySelector('[name="action_money"]')?.value;
+                const count = form.querySelector('[name="action_count"]')?.value;
+                const msg = form.querySelector('[name="action_msg"]')?.value;
+                const recivers = form.querySelector('[name="action_recivers"]')?.value;
+                const gesture = form.querySelector('[name="action_gesture"]')?.value;
+                buttonData.action.params = {};
+                buttonData.action.params.type = type;
+                buttonData.action.params.money = money;
+                buttonData.action.params.count = count;
+                buttonData.action.params.msg = msg;
+                buttonData.action.params.recivers = recivers == null ? [] : recivers.split(",");
+                buttonData.action.params.gesture = gesture;
             }
+        }
 
-            // 子按钮设置
-            const childForms = form.querySelectorAll('.child-button-form');
-            if (childForms.length > 0) {
-                buttonData.children = [];
+        // 子按钮设置
+        const childForms = form.querySelectorAll('.child-button-form');
+        if (childForms.length > 0) {
+            buttonData.children = [];
 
-                childForms.forEach(childForm => {
-                    const childData = {};
-                    const childText = childForm.querySelector('[name="text"]').value;
-                    if (!childText.trim()) {
-                        throw new Error(`按钮 ${index + 1} 的子按钮: 文本不能为空`);
-                    }
-                    childData.text = childText;
+            childForms.forEach(childForm => {
+                const childData = {};
+                const childText = childForm.querySelector('[name="text"]').value;
+                if (!childText.trim()) return;
 
-                    const childCooldown = childForm.querySelector('[name="cooldown"]').value;
-                    if (childCooldown && !isNaN(childCooldown) && parseInt(childCooldown) > 0) {
-                        childData.cooldown = parseInt(childCooldown);
-                    }
+                childData.text = childText;
 
-                    const childRefreshValue = childForm.querySelector('[name="muliRefresh"]').value;
-                    if (childRefreshValue) {
-                        childData.muliRefresh = childRefreshValue === 'true' ? true : childRefreshValue;
-                    }
+                const childCooldown = childForm.querySelector('[name="cooldown"]').value;
+                if (childCooldown && !isNaN(childCooldown) && parseInt(childCooldown) > 0) {
+                    childData.cooldown = parseInt(childCooldown);
+                }
 
-                    const childActionType = childForm.querySelector('[name="actionType"]').value;
-                    childData.action = {};
-                    childData.action.type = childActionType;
-                    if (childActionType && ACTION_TEMPLATES[childActionType]) {
-                        // 这里简化处理，实际应该根据模板生成代码
-                        if (childActionType === 'sendMsg') {
-                            var message = childForm.querySelector('[name="action_message"]')?.value;
-                            var messages = message.split(',');
-                            if (messages.length > 1) {
-                                childData.action.params = messages;
-                            } else {
-                                childData.action.params = message;
-                            }
-                            var delay = childForm.querySelector('[name="action_delay"]')?.value;
-                            if (!delay) {
-                                delay = 0;
-                            }
-                            childData.action.delay = delay;
-                        } else if (childActionType === 'sendIconTextMsg') {
-                            var message = childForm.querySelector('[name="action_message"]')?.value;
+                const childRefreshValue = childForm.querySelector('[name="muliRefresh"]').value;
+                if (childRefreshValue) {
+                    childData.muliRefresh = childRefreshValue === 'true' ? true : childRefreshValue;
+                }
+
+                const childActionType = childForm.querySelector('[name="actionType"]').value;
+                childData.action = {};
+                childData.action.type = childActionType;
+                if (childActionType && ACTION_TEMPLATES[childActionType]) {
+                    // 这里简化处理，实际应该根据模板生成代码
+                    if (childActionType === 'sendMsg') {
+                        var message = childForm.querySelector('[name="action_message"]')?.value;
+                        var messages = message.split(',');
+                        if (messages.length > 1) {
+                            childData.action.params = messages;
+                        } else {
                             childData.action.params = message;
-                        } else if (childActionType === 'promptAndSend') {
-                            const promptText = childForm.querySelector('[name="action_promptText"]')?.value;
-                            const defaultValue = childForm.querySelector('[name="action_defaultValue"]')?.value;
-                            const actionCode = childForm.querySelector('[name="action_actionCode"]')?.value;
-                            childData.action.params = {};
-                            childData.action.params.promptText = promptText;
-                            childData.action.params.defaultValue = defaultValue;
-                            childData.action.params.actionCode = actionCode;
-                        } else if (childActionType === 'fetchPrivate') {
-                            var message = childForm.querySelector('[name="action_endpoint"]')?.value;
-                            var messages = message.split(',');
-                            if (messages.length > 1) {
-                                childData.action.params = messages;
-                            } else {
-                                childData.action.params = message;
-                            }
-                        } else if (childActionType === 'promptAndIconTextMsg') {
-                            const defaultValue = childForm.querySelector('[name="action_defaultValue"]')?.value;
-                            childData.action.params = {};
-                            childData.action.params.defaultValue = defaultValue;
-                        } else if (childActionType === 'sendRedPacketMsg') {
-                            const type = childForm.querySelector('[name="action_type"]')?.value;
-                            const money = childForm.querySelector('[name="action_money"]')?.value;
-                            const count = childForm.querySelector('[name="action_count"]')?.value;
-                            const msg = childForm.querySelector('[name="action_msg"]')?.value;
-                            const recivers = childForm.querySelector('[name="action_recivers"]')?.value;
-                            const gesture = childForm.querySelector('[name="action_gesture"]')?.value;
-                            childData.action.params = {};
-                            childData.action.params.type = type;
-                            childData.action.params.money = money;
-                            childData.action.params.count = count;
-                            childData.action.params.msg = msg;
-                            childData.action.params.recivers = recivers == null ? [] : recivers.split(",");
-                            childData.action.params.gesture = gesture;
                         }
+                        var delay = childForm.querySelector('[name="action_delay"]')?.value;
+                        if (!delay) {
+                            delay = 0;
+                        }
+                        childData.action.delay = delay;
+                    } else if (childActionType === 'sendIconTextMsg') {
+                        var message = childForm.querySelector('[name="action_message"]')?.value;
+                        childData.action.params = message;
+                    } else if (childActionType === 'promptAndSend') {
+                        const promptText = childForm.querySelector('[name="action_promptText"]')?.value;
+                        const defaultValue = childForm.querySelector('[name="action_defaultValue"]')?.value;
+                        const actionCode = childForm.querySelector('[name="action_actionCode"]')?.value;
+                        childData.action.params = {};
+                        childData.action.params.promptText = promptText;
+                        childData.action.params.defaultValue = defaultValue;
+                        childData.action.params.actionCode = actionCode;
+                    } else if (childActionType === 'fetchPrivate') {
+                        var message = childForm.querySelector('[name="action_endpoint"]')?.value;
+                        var messages = message.split(',');
+                        if (messages.length > 1) {
+                            childData.action.params = messages;
+                        } else {
+                            childData.action.params = message;
+                        }
+                    } else if (childActionType === 'promptAndIconTextMsg') {
+                        const defaultValue = childForm.querySelector('[name="action_defaultValue"]')?.value;
+                        childData.action.params = {};
+                        childData.action.params.defaultValue = defaultValue;
+                    } else if (childActionType === 'sendRedPacketMsg') {
+                        const type = childForm.querySelector('[name="action_type"]')?.value;
+                        const money = childForm.querySelector('[name="action_money"]')?.value;
+                        const count = childForm.querySelector('[name="action_count"]')?.value;
+                        const msg = childForm.querySelector('[name="action_msg"]')?.value;
+                        const recivers = childForm.querySelector('[name="action_recivers"]')?.value;
+                        const gesture = childForm.querySelector('[name="action_gesture"]')?.value;
+                        childData.action.params = {};
+                        childData.action.params.type = type;
+                        childData.action.params.money = money;
+                        childData.action.params.count = count;
+                        childData.action.params.msg = msg;
+                        childData.action.params.recivers = recivers == null ? [] : recivers.split(",");
+                        childData.action.params.gesture = gesture;
                     }
+                }
 
-                    buttonData.children.push(childData);
-                });
-            }
+                buttonData.children.push(childData);
+            });
+        }
 
-            newConfig.push(buttonData);
-        });
-
-        activeConfig = newConfig;
-        updateJsonEditor();
+        return buttonData;
     }
 // ================= 小尾巴 ==================
     // 替换原有菜单系统，添加统一的设置按钮
