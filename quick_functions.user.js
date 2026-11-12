@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         鱼派快捷功能
-// @version      2.7.0
+// @version      2.7.1
 // @description  快捷操作，快捷引用、消息、表情包分组、小尾巴
 // @author       Kirito + muli + 18 + trd
 // @match        https://fishpi.cn/cr
@@ -53,6 +53,8 @@
 // 2026-11-06 muli （2.7.0） 新增语录记事本（消息左下角收藏按钮悬停显示、记事本浮窗点击语录快捷发送、支持手动添加/编辑/删除语录、拖拽记忆位置）；
 // 优化配置编辑器性能（JSON解析防抖、可视化编辑单表单增量同步、面板按需渲染、大JSON改用value渲染）；没有按钮配置时不构建浮窗；
 // 修复可视化编辑子按钮消息参数保存错误的问题；修复编辑器/记事本输入框内回车误触发快捷发送的问题
+// 2026-11-12 muli （2.7.1） 手机端不再渲染浮层UI（固定尺寸浮块会挡住手机屏幕），油猴菜单新增"启用/禁用快捷浮窗"开关和"打开按钮配置编辑器"入口；
+// 记事本点击语录改为追加到输入框，列表新增一键发送小按钮区分两种行为
 
 (function () {
     'use strict';
@@ -74,7 +76,7 @@
     let iconText = "![](https://fishpi.cn/gen?ver=0.1&scale=1.5&txt=#{msg}&url=#{avatar}&backcolor=#{backcolor}&fontcolor=#{fontcolor})";
 
     const client_us = "Web/沐里会睡觉";
-    const version_us = "v2.7.0";
+    const version_us = "v2.7.1";
 
     // 设置面板状态
     let settingsPanelVisible = false;
@@ -139,6 +141,43 @@
             localStorage.removeItem(key);
         }
 
+    }
+
+    // ================== 快捷浮层总开关（手机端默认不渲染，固定尺寸浮块会挡住手机屏幕） ==================
+    const QUICK_UI_DISABLED_KEY = 'fishpi_quick_ui_disabled';
+    let quickUiDisabledCache = null;
+
+    // 识别手机端（UA + iPadOS桌面UA特例）
+    function isMobileDevice() {
+        try {
+            if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') {
+                return navigator.userAgentData.mobile;
+            }
+        } catch (e) {}
+        const ua = navigator.userAgent || '';
+        if (/Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua)) {
+            return true;
+        }
+        // iPadOS 13+ 使用桌面UA，通过多点触控特例识别
+        if (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1) {
+            return true;
+        }
+        return false;
+    }
+
+    // 浮层是否禁用：优先用户手动设置（油猴菜单可切换），未设置时手机端默认禁用
+    function isQuickUiDisabled() {
+        if (quickUiDisabledCache === null) {
+            const saved = muliSpecialStorage.getItem(QUICK_UI_DISABLED_KEY);
+            if (saved === 'true') {
+                quickUiDisabledCache = true;
+            } else if (saved === 'false') {
+                quickUiDisabledCache = false;
+            } else {
+                quickUiDisabledCache = isMobileDevice();
+            }
+        }
+        return quickUiDisabledCache;
     }
 
     // 小尾巴开关状态
@@ -672,6 +711,11 @@
 
     // 添加复读按钮的函数
     function addRepeatButtonOptimized(chatItem) {
+        // 手机端/手动关闭浮层时不渲染消息上的复读/收藏按钮
+        if (isQuickUiDisabled()) {
+            return;
+        }
+
         if (chatItem.classList.contains('repeat-btn-added')) {
             return;
         }
@@ -4546,6 +4590,34 @@
         showTemporaryHint(`已发送语录：${quote.title}`);
     }
 
+    // 追加语录到聊天输入框末尾（不发送）
+    function appendQuoteToInput(quote) {
+        const activeInput = getActiveInput();
+        if (!activeInput) {
+            showTemporaryHint('未找到聊天输入框');
+            return;
+        }
+
+        const currentContent = activeInput.textContent || '';
+        // 输入框已有内容时用换行分隔
+        const separator = currentContent && !/\n$/.test(currentContent) ? '\n' : '';
+        activeInput.textContent = currentContent + separator + quote.content;
+
+        activeInput.focus();
+        // 光标移到末尾，方便继续输入
+        const range = document.createRange();
+        range.selectNodeContents(activeInput);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        // 触发输入事件
+        const inputEvent = new Event('input', { bubbles: true });
+        activeInput.dispatchEvent(inputEvent);
+        showTemporaryHint(`已追加到输入框：${quote.title}`);
+    }
+
     // 打开/收起记事本浮窗
     function toggleNotepad() {
         const panel = document.getElementById('muli-notepad');
@@ -4608,7 +4680,7 @@
 
             const main = document.createElement('div');
             main.className = 'notepad-item-main';
-            main.title = '点击发送这条语录';
+            main.title = '点击追加到输入框';
 
             const titleEl = document.createElement('div');
             titleEl.className = 'notepad-item-title';
@@ -4625,11 +4697,20 @@
             main.appendChild(titleEl);
             main.appendChild(preview);
             main.appendChild(meta);
-            // 点击语录快捷发送
-            main.addEventListener('click', () => sendQuote(quote));
+            // 点击语录追加到输入框
+            main.addEventListener('click', () => appendQuoteToInput(quote));
 
             const ops = document.createElement('div');
             ops.className = 'notepad-item-ops';
+
+            const sendBtn = document.createElement('button');
+            sendBtn.className = 'notepad-send-btn';
+            sendBtn.textContent = '➤';
+            sendBtn.title = '一键发送';
+            sendBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                sendQuote(quote);
+            });
 
             const editBtn = document.createElement('button');
             editBtn.textContent = '✎';
@@ -4652,6 +4733,7 @@
                 }
             });
 
+            ops.appendChild(sendBtn);
             ops.appendChild(editBtn);
             ops.appendChild(delBtn);
 
@@ -5027,6 +5109,16 @@
         background: #e9ecef;
         color: #495057;
     }
+
+    /* 一键发送按钮 */
+    .notepad-item-ops .notepad-send-btn {
+        color: #2b8a3e;
+    }
+
+    .notepad-item-ops .notepad-send-btn:hover {
+        background: #d3f9d8;
+        color: #2b8a3e;
+    }
     `);
 
     // ================== 初始化 ==================
@@ -5169,6 +5261,12 @@
         if (FINAL_BUTTONS_CONFIG.some(btn => typeof btn.action === 'function')) {
             FINAL_BUTTONS_CONFIG = ConfigSerializer.migrateOldConfig(FINAL_BUTTONS_CONFIG);
             muliSpecialStorage.setItem(CONFIG_STORAGE_KEY, ConfigSerializer.serialize(FINAL_BUTTONS_CONFIG));
+        }
+
+        // 手机端（或用户手动关闭）不渲染任何浮层UI：固定尺寸浮块会挡住手机屏幕
+        // 浮层关闭时可通过油猴菜单"打开按钮配置编辑器"管理配置、"启用/禁用快捷浮窗"恢复显示
+        if (isQuickUiDisabled()) {
+            return;
         }
 
         // 为已有聊天项添加复读/收藏按钮（需在配置加载完成后执行，收藏按钮依赖按钮配置）
@@ -5475,6 +5573,16 @@
 // ================= 小尾巴 ==================
     // 替换原有菜单系统，添加统一的设置按钮
     GM_registerMenuCommand("设置小尾巴", showSettingsPanel);
+
+    // 快捷浮层总开关（手机端默认关闭，可在菜单手动切换，切换后刷新页面生效）
+    GM_registerMenuCommand("启用/禁用快捷浮窗", () => {
+        const nowDisabled = isQuickUiDisabled();
+        muliSpecialStorage.setItem(QUICK_UI_DISABLED_KEY, nowDisabled ? 'false' : 'true');
+        muliRefreshPage(nowDisabled ? '快捷浮窗已启用，正在刷新生效' : '快捷浮窗已关闭，正在刷新生效', 1500);
+    });
+
+    // 浮层关闭时也能打开按钮配置编辑器
+    GM_registerMenuCommand("打开按钮配置编辑器", showEditor);
 
     // 显示设置面板
     function showSettingsPanel() {
