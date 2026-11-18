@@ -13,7 +13,8 @@
 // ==/UserScript==
 
 // 更新
-// 2026-11-18 v1.0.5 取消api硬拼/api/v3，由配置方自己控制api前缀，脚本只复制定死url
+// 2026-11-18 v1.0.5 取消api硬拼/api/v3，由配置方自己控制api前缀，脚本只负责定死url
+//   修复单击图片报错（油猴沙箱 window 不能作 MouseEvent 的 view 属性，合成点击已移除 view 参数）
 // 2026-11-17 v1.0.5 子按钮弹层超过 9 个自动换列（每列上限 9，以屏幕中间装订位为极限基准），
 //   并加视口边界夹取（多列变宽/任意浮块位置下弹层均完整可见）；
 //   修复专属红包不弹用户名填写/配置无效（recivers 空串数组归一化过滤 + getUser 响应形态兼容 + 解析失败明确报错）；
@@ -34,7 +35,7 @@
 //   每条请求支持自定义请求头（JSON 对象或每行 k=v，执行时归一化校验，覆盖同名自动头）；
 //   站内请求默认头补全（与浏览器端一致）：Authorization Bearer token、Idempotency-Key（settings:/req: 前缀 32hex）、
 //   Content-Type（按请求体类型）、Accept、Cookie（credentials:include）；无独立签名机制（v3 即 token+cookie+幂等键）；
-//   移除可视化配置的拖拽排序（卡片高易误触且有 bug，调顺序请改右侧 JSON 数组顺序）；修复 methodHasBody 归属错误导致面板设置崩溃
+//   移除可视化配置的拖拽排序（卡片高易误触且有 bug，调顺序请改右侧 JSON 数组顺序）；修复 methodHasBody 归属错误导致面板设置崩溃；
 // 2026-11-17 v1.0.4 URL请求动作新增 POST 支持（method/endpoint/body 三字段，body 为 JSON 校验），
 //   旧配置（字符串/数组 = GET 多条）完全兼容，编辑时自动迁移为新格式
 // 2026-11-17 v1.0.3 四轮测试优化：toast 提示移到顶部（底部会被浮块遮挡）；按钮放大（13px 字号）且浮动/装订统一三列等宽布局；
@@ -541,7 +542,7 @@
         function replayClick(img) {
             replaying = true;
             try {
-                img.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, button: 0 }));
+                img.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
             } finally {
                 setTimeout(() => { replaying = false; }, 0);
             }
@@ -670,7 +671,7 @@
         function replayClick(link) {
             replaying = true;
             try {
-                link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, button: 0 }));
+                link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
             } finally {
                 setTimeout(() => { replaying = false; }, 0);
             }
