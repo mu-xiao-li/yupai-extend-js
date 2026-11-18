@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         鱼排聊天增强
 // @namespace    https://fishpi.cn
-// @version      1.0.5
-// @description  新版聊天室增强：双击引用、双击艾特、快捷复读、快捷消息按钮、表情包增强、语录记事本（全新重构版）
+// @version      1.0.6
+// @description  新版聊天室增强：快捷复读、快捷消息按钮、表情包增强、语录记事本（全新重构版）
 // @author       muli
 // @match        https://new.fishpi.cn/cr
 // @icon         https://file.fishpi.cn/2025/11/blob-4d0e46ad.png?imageView2/1/w/48/h/48/interlace/0/q/100
@@ -10,10 +10,21 @@
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
 // @run-at       document-end
+// @downloadURL  https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_chat_plus.user.js
+// @updateURL    https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_chat_plus.user.js
 // ==/UserScript==
 
 // 更新
+// 2026-11-18 v1.0.6 Safari 系脚本管理器兼容：GM_addStyle 缺失时降级为 createElement('style') 注入，
+//   GM_registerMenuCommand 缺失时静默跳过（功能均有浮块/界面入口，不丢功能）；
+//   移除双击头像艾特（站点原生已收编该功能，脚本不再重复实现）；
+//   移除双击消息体引用与双击图片引用（站点原生已收编双击引用，脚本不再重复实现）；
+//   修复红包误报"接口响应格式异常"：v3 错误响应 code 可能为字符串（unauthorized/captcha 等），
+//   改为透出服务端 msg，格式异常时附带状态码+响应原文（前端逆向自线上 bundle）；
+//   猜拳红包请求体对齐线上原生（不带 count）；红包金额/个数/留言/手势按 bundle 校验规则（fa）前置校验
 // 2026-11-18 v1.0.5 取消api硬拼/api/v3，由配置方自己控制api前缀，脚本只负责定死url
+//   凭证双轨自动分流（新旧 token 不通用）：/api/v3/* 带新版 Bearer token + 幂等键，其他站内路径带旧版凭证
+//   （Label.csrfToken 头 + Label.node.apiKey 参数 + Cookie），外部域名不带任何凭证，自定义请求头可覆盖；
 //   修复单击图片报错（油猴沙箱 window 不能作 MouseEvent 的 view 属性，合成点击已移除 view 参数）
 // 2026-11-17 v1.0.5 子按钮弹层超过 9 个自动换列（每列上限 9，以屏幕中间装订位为极限基准），
 //   并加视口边界夹取（多列变宽/任意浮块位置下弹层均完整可见）；
@@ -63,7 +74,7 @@
     // ================== 常量 ==================
     const API_BASE = 'https://fishpi.cn';
     const CLIENT_US = "Web/沐里爱睡觉";
-    const VERSION_US = "v1.0.5";
+    const VERSION_US = "v1.0.6";
     const CLIENT_TAG = CLIENT_US + VERSION_US;
     const NS = 'fpcp_';                   // localStorage 前缀
     const DEFAULT_POSITION = { x: 20, y: 20 };
@@ -249,8 +260,15 @@
                 this._token = null;
                 rsp = await doFetch();
             }
-            const j = await rsp.json().catch(() => null);
-            if (!j || typeof j.code !== 'number') throw new Error('接口响应格式异常');
+            // 先读文本再解析。v3 错误响应的 code 可能是字符串（如 unauthorized/captcha——
+            // 线上 bundle http 客户端按 String(code) 处理），只有缺 code/非 JSON 才算格式异常；
+            // 有 code 一律走业务报错透出服务端 msg，不再把字符串码误报成"格式异常"
+            const text = await rsp.text().catch(() => '');
+            let j = null;
+            try { j = JSON.parse(text); } catch (e) { /* 非 JSON（HTML/空响应）走下方报错 */ }
+            if (!j || typeof j !== 'object' || j.code === undefined || j.code === null) {
+                throw new Error(`接口响应格式异常(${rsp.status}): ${text.slice(0, 200) || '(空响应)'}`);
+            }
             if (j.code !== 0) throw new Error(j.msg || `请求失败(${j.code})`);
             return j.data;
         },
@@ -493,232 +511,6 @@
         return true;
     }
 
-    // ================== 双击消息体 → 引用（招牌功能） ==================
-    // 绑定在 .message-stack（消息主体）上；去掉选词拦截（双击本身就会选中单词，
-    // 旧版拦截逻辑导致"选中文字而不触发"的不灵敏问题），触发时清掉误选区
-    function setupDoubleClickQuote() {
-        document.addEventListener('dblclick', (event) => {
-            try {
-                const target = event.target;
-                if (!(target instanceof Element)) return;
-
-                // 仅消息主体内触发
-                const stack = target.closest('.message-stack');
-                if (!stack) return;
-
-                // 链接/图片/按钮等交互元素上不触发（图片走 setupImageQuote 的点击拦截）
-                if (target.closest('a, button, img, video, iframe, .fp-chat-tail')) return;
-
-                const entry = MsgDom.entryOf(target);
-                if (!entry) return;
-                const info = MsgDom.parse(entry);
-                if (!info) return;
-
-                // 触发原生「引用消息」按钮，格式/预览/清除全由新 UI 接管
-                const quoteBtn = entry.querySelector('button[title="引用消息"]');
-                if (quoteBtn) {
-                    event.preventDefault();
-                    // 清掉双击产生的误选区
-                    const sel = window.getSelection();
-                    if (sel) sel.removeAllRanges();
-                    quoteBtn.click();
-                    toast(`已引用 ${info.nickname || info.userName} 的消息`);
-                }
-            } catch (e) {
-                console.warn('[fishpi_chat_plus] dblclick quote error:', e);
-            }
-        });
-    }
-
-    // ================== 双击图片 → 引用（拦截图片查看器） ==================
-    // 双击图片会打开图片查看器，导致无法引用图片消息。
-    // 方案：捕获阶段拦截消息体内图片的 click —— 第一次点击延迟 320ms 放行（保留单击看图），
-    // 期间第二次点击到来则判为双击 → 引用消息；同时吞掉浏览器合成的 dblclick 防查看器再触发。
-    function setupImageQuote() {
-        const CLICK_DELAY = 320;
-        let pending = { img: null, timer: null };
-        let replaying = false;
-
-        function replayClick(img) {
-            replaying = true;
-            try {
-                img.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
-            } finally {
-                setTimeout(() => { replaying = false; }, 0);
-            }
-        }
-
-        function doQuote(img) {
-            const entry = MsgDom.entryOf(img);
-            if (!entry) return false;
-            const quoteBtn = entry.querySelector('button[title="引用消息"]');
-            if (!quoteBtn) return false;
-            const info = MsgDom.parse(entry);
-            quoteBtn.click();
-            toast(`已引用 ${info ? (info.nickname || info.userName) : ''} 的消息`);
-            return true;
-        }
-
-        // 捕获阶段拦截图片点击（先于查看器的 click 处理）
-        document.addEventListener('click', (event) => {
-            try {
-                if (replaying) return;
-                if (!(event.target instanceof Element)) return;
-                const img = event.target.closest('img');
-                if (!img) return;
-                // 仅消息气泡内的图片
-                if (!img.closest('.fp-bubble')) return;
-                // 头像图片走艾特逻辑，不在此处理
-                if (img.closest('a.fp-avatar-frame')) return;
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                if (pending.img === img && pending.timer) {
-                    // 双击：取消延迟放行，引用消息
-                    clearTimeout(pending.timer);
-                    pending = { img: null, timer: null };
-                    doQuote(img);
-                } else {
-                    // 单击：延迟放行（给双击留窗口，保留单击看图）
-                    if (pending.timer) {
-                        clearTimeout(pending.timer);
-                        const prev = pending.img;
-                        pending = { img: null, timer: null };
-                        if (prev) replayClick(prev);
-                    }
-                    const timer = setTimeout(() => {
-                        pending = { img: null, timer: null };
-                        replayClick(img);
-                    }, CLICK_DELAY);
-                    pending = { img, timer };
-                }
-            } catch (e) {
-                console.warn('[fishpi_chat_plus] image quote error:', e);
-            }
-        }, true);
-
-        // 吞掉浏览器在双击后合成的 dblclick（防止查看器走 dblclick 打开）
-        document.addEventListener('dblclick', (event) => {
-            try {
-                if (!(event.target instanceof Element)) return;
-                const img = event.target.closest('img');
-                if (img && img.closest('.fp-bubble') && !img.closest('a.fp-avatar-frame')) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                }
-            } catch (e) { }
-        }, true);
-    }
-
-    // ================== 双击头像 → @（修复失效与误进主页） ==================
-    // 旧版根因：自制 400ms 双击判定 + location.href 延迟跳转，SPA 下既易失效又易误触。
-    // 新方案：
-    //   - 捕获阶段拦截头像链接的 click，双击（320ms 内两次）→ 阻止跳转并 @
-    //   - 单击 → 延迟 320ms 后放行原生跳转（SPA 路由完整保留，不再整页刷新）
-    //   - 用原生双击计时而非 dblclick 事件（dblclick 时第一次 click 的跳转已发生，来不及拦）
-    function setupDoubleClickAt() {
-        const CLICK_DELAY = 320;
-        let pending = { link: null, timer: null };
-        let replaying = false;   // 重放标志：放行时不再拦截
-
-        function resolveUserName(link) {
-            let name = link.getAttribute('data-user-card') || '';
-            if (!name) {
-                const href = link.getAttribute('href') || '';
-                const m = href.match(/\/member\/([^/?#]+)/);
-                if (m) name = decodeURIComponent(m[1]);
-            }
-            return name;
-        }
-
-        function doAt(link) {
-            const entry = MsgDom.entryOf(link);
-            // 优先触发该消息的 mention 按钮（走新 UI 自带 @ 逻辑），再补一个尾部空格
-            const mentionBtn = entry && entry.querySelector('button.name.name--mention');
-            if (mentionBtn) {
-                mentionBtn.click();
-                setTimeout(() => ensureTrailingSpace(), 0);
-                return true;
-            }
-            const userName = resolveUserName(link);
-            if (userName) {
-                insertToEditor(`@${userName} `);
-                return true;
-            }
-            return false;
-        }
-
-        // 确保光标处（艾特文本后）有一个空格（双击艾特后自动补）
-        function ensureTrailingSpace() {
-            const ed = getEditorEl();
-            if (!ed) return;
-            const sel = window.getSelection();
-            if (sel && sel.rangeCount > 0 && ed.contains(sel.anchorNode)) {
-                // 光标前一个字符不是空白才补
-                const range = sel.getRangeAt(0).cloneRange();
-                range.setStart(ed, 0);
-                const before = range.toString();
-                if (before.length > 0 && !/\s$/.test(before)) {
-                    insertToEditor(' ');
-                }
-            } else if ((ed.textContent || '').length > 0 && !/\s$/.test(ed.textContent)) {
-                insertToEditor(' ');
-            }
-        }
-
-        // 单击放行：重放 click，让 Vue 路由/原生行为正常接管（保持 SPA 无刷新跳转）
-        function replayClick(link) {
-            replaying = true;
-            try {
-                link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
-            } finally {
-                setTimeout(() => { replaying = false; }, 0);
-            }
-        }
-
-        // 捕获阶段：先于 Vue 路由/原生跳转处理
-        document.addEventListener('click', (event) => {
-            try {
-                if (replaying) return;
-                if (!(event.target instanceof Element)) return;
-                const link = event.target.closest('a.fp-avatar-frame');
-                if (!link) return;
-                // 仅消息区内的头像（不拦侧栏等其他头像）
-                if (!MsgDom.entryOf(link)) return;
-                if (event.button !== 0) return;
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                if (pending.link === link && pending.timer) {
-                    // 双击：取消延迟跳转，执行 @
-                    clearTimeout(pending.timer);
-                    pending = { link: null, timer: null };
-                    if (doAt(link)) {
-                        const info = MsgDom.parse(MsgDom.entryOf(link));
-                        toast(`已 @${(info && (info.nickname || info.userName)) || ''}`);
-                    }
-                } else {
-                    // 单击：延迟放行跳转（给双击留窗口）
-                    if (pending.timer) {
-                        clearTimeout(pending.timer);
-                        const prev = pending.link;
-                        pending = { link: null, timer: null };
-                        if (prev) replayClick(prev);   // 切换目标时立即放行上一个
-                    }
-                    const timer = setTimeout(() => {
-                        pending = { link: null, timer: null };
-                        replayClick(link);
-                    }, CLICK_DELAY);
-                    pending = { link, timer };
-                }
-            } catch (e) {
-                console.warn('[fishpi_chat_plus] dblclick at error:', e);
-            }
-        }, true);  // 捕获阶段
-    }
-
     // ================== 消息快捷按钮：复读 ↲➲ + 收藏 ⭐ ==================
     const MessageActions = {
         init() {
@@ -941,10 +733,20 @@
             const cfg = { type, money: Number(p.money), message: String(p.msg ?? p.message ?? '摸鱼者事尽成') };
             // 手势：'无' 或留空默认随机（与旧版一致）
             const gestureRandom = () => Math.floor(Math.random() * 3);
-            if (!cfg.money || cfg.money < 1) {
-                const input = prompt('请输入红包金额：', '256');
+            // 线上 bundle 请求体硬校验（fa 函数）前置化：金额 32-10240 整数、猜拳 ≥256，
+            // 留言有效字符（中英文/数字/常用标点）≤20——非法配置直接明确报错，不再靠服务端 422
+            const minMoney = type === 'rockPaperScissors' ? 256 : 32;
+            if (!Number.isSafeInteger(cfg.money) || cfg.money < minMoney || cfg.money > 10240) {
+                const input = prompt(`请输入红包金额（${minMoney}-10240 整数）：`, '256');
                 if (input === null || input === '') return;
                 cfg.money = Number(input);
+            }
+            if (!Number.isSafeInteger(cfg.money) || cfg.money < minMoney || cfg.money > 10240) {
+                throw new Error(`红包金额需为 ${minMoney}-10240 的整数`);
+            }
+            const effectiveLen = cfg.message.replace(/[^0-9a-zA-Z一-龥,，.。！!?？《》 ]/gu, '').length;
+            if (cfg.message.length > 4096 || effectiveLen > 20) {
+                throw new Error('红包留言超限：总长 ≤4096，且有效字符（中英文/数字/常用标点）≤20');
             }
             if (type === 'specify') {
                 // 专属红包：用户名 → 用户ID（v3 用 recipientIds）
@@ -971,8 +773,14 @@
                     }
                 }
                 cfg.recipientIds = ids;
-            } else {
+            } else if (type !== 'rockPaperScissors') {
+                // 猜拳红包不带 count（对齐线上原生请求体：fa 只发 type/money/message/riskAccepted/gesture，
+                // count 若存在必须为 1，原生构造时不带）；其他类型 count 必填 1-100（心跳 5-100）
                 cfg.count = Number(p.count) || (type === 'heartbeat' ? 5 : 1);
+                const minCount = type === 'heartbeat' ? 5 : 1;
+                if (!Number.isSafeInteger(cfg.count) || cfg.count < minCount || cfg.count > 100) {
+                    throw new Error(`红包个数需为 ${minCount}-100 的整数`);
+                }
             }
             if (type === 'rockPaperScissors') {
                 let gesture;
@@ -985,6 +793,9 @@
                         if (input === null || input === '') return;
                         gesture = Number(input);
                     }
+                }
+                if (!Number.isSafeInteger(gesture) || gesture < 0 || gesture > 2) {
+                    throw new Error('手势需为 0-2（石头/剪刀/布）');
                 }
                 cfg.gesture = gesture;
                 cfg.riskAccepted = true;
@@ -1090,23 +901,40 @@
             }
         },
 
-        // 构造请求（站内请求自动注入 Bearer token；外部域名不携带，防凭证泄漏）
-        // customHeaders 用户配置请求头，优先生效（用户显式配置覆盖自动注入的同名头）
+        // 构造请求：按接口代际自动选凭证体系（两套 token 不通用，不能瞎带）
+        //   /api/v3/*  → 新版：Bearer accessToken（/api/v3/auth/refresh 签发）+ Idempotency-Key
+        //   其他站内   → 旧版：cookie 会话 + csrfToken 头 + apiKey 查询参数（Label 存在时，如旧版页面）
+        // 外部域名不携带任何凭证，防泄漏；用户配置的自定义请求头永远最后覆盖
         async buildFetchOpt(method, ep, body, contentType, customHeaders) {
-            const url = this.buildUrl(ep);
+            let url = this.buildUrl(ep);
             const init = { method, credentials: 'include' };
             const isSameSite = /^https:\/\/(www\.)?fishpi\.cn(\/|$)/i.test(url) || url.startsWith(location.origin);
             const headers = {};
             if (isSameSite) {
-                try {
-                    const token = await Api.token();
-                    if (token) headers['Authorization'] = `Bearer ${token}`;
-                } catch (e) {
-                    console.warn('[fishpi_chat_plus] URL请求未取到 token，按无凭证发送:', e);
-                }
-                // v3 写接口必备幂等键（与浏览器端一致的 settings:<32hex> 格式；自定义头可覆盖）
-                if (methodHasBody(method)) {
-                    headers['Idempotency-Key'] = this.makeIdemKey(url);
+                if (/\/api\/v3\//.test(url)) {
+                    // ---- 新版 v3：Bearer token + 写操作幂等键 ----
+                    try {
+                        const token = await Api.token();
+                        if (token) headers['Authorization'] = `Bearer ${token}`;
+                    } catch (e) {
+                        console.warn('[fishpi_chat_plus] URL请求未取到 token，按无凭证发送:', e);
+                    }
+                    if (methodHasBody(method)) {
+                        headers['Idempotency-Key'] = this.makeIdemKey(url);
+                    }
+                } else {
+                    // ---- 旧版接口：csrfToken 头 + apiKey 参数（Label 存在时自动带；cookie 会话始终带）----
+                    try {
+                        const L = typeof Label !== 'undefined' ? Label : null;
+                        if (L) {
+                            if (L.csrfToken) headers['csrfToken'] = L.csrfToken;
+                            if (L.node && L.node.apiKey) {
+                                url += (url.includes('?') ? '&' : '?') + 'apiKey=' + encodeURIComponent(L.node.apiKey);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[fishpi_chat_plus] 旧版凭证读取失败，按纯 cookie 发送:', e);
+                    }
                 }
             }
             headers['Accept'] = '*/*';
@@ -2228,7 +2056,7 @@
             }
 
             const wrap = el('div', { class: 'fpcp-req-list' });
-            wrap.appendChild(el('div', { class: 'fpcp-req-hint', text: '按顺序依次执行，可添加多条（允许重复同一接口）；「延迟」= 该条执行前等待毫秒数（定时请求）。站内请求默认自动带：Authorization token、Idempotency-Key、Content-Type、Accept、Cookie——仅在需要覆盖时才填自定义请求头' }));
+            wrap.appendChild(el('div', { class: 'fpcp-req-hint', text: '按顺序依次执行，可添加多条（允许重复同一接口）；「延迟」= 该条执行前等待毫秒数（定时请求）。凭证按 URL 自动选择：/api/v3/ 路径带新版 token（Bearer + 幂等键），其他站内路径带旧版凭证（csrfToken + apiKey + Cookie）。仅在需要覆盖时才填自定义请求头' }));
 
             action.params.forEach((req, idx) => {
                 const card = el('div', { class: 'fpcp-req-card' });
@@ -2946,9 +2774,29 @@
         }
     };
 
+    // ================== GM API 兼容层 ==================
+    // Safari 系脚本管理器（Stay、Userscripts 等）不一定提供 GM_addStyle/GM_registerMenuCommand，
+    // 运行时判断：有原生 API 就用，没有则降级实现/跳过，保证脚本不崩
+    function addStyle(css) {
+        if (typeof GM_addStyle === 'function') {
+            GM_addStyle(css);
+            return;
+        }
+        const style = document.createElement('style');
+        style.textContent = css;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    function registerMenu(label, fn) {
+        if (typeof GM_registerMenuCommand === 'function') {
+            GM_registerMenuCommand(label, fn);
+        }
+        // 无油猴菜单的环境静默跳过：各功能均有浮块/界面内入口，不丢功能
+    }
+
     // ================== 样式 ==================
     function injectStyles() {
-        GM_addStyle(`
+        addStyle(`
 /* ---- 主题变量映射（跟随新 UI data-theme 深浅色自动切换） ---- */
 :root {
   --fpcp-card: var(--fp-card, #fff);
@@ -3272,21 +3120,16 @@
         MessageActions.init();
         EmojiEnhance.init();
 
-        // 双击功能
-        setupDoubleClickQuote();
-        setupDoubleClickAt();
-        setupImageQuote();
-
         // 快捷浮块
         QuickActions.init();
 
         // 补扫现存消息
         MessageWatcher.scanNow();
 
-        // 油猴菜单
-        GM_registerMenuCommand('按钮配置', () => Editor.open());
-        GM_registerMenuCommand('语录记事本', () => Notepad.toggle());
-        GM_registerMenuCommand('启用/禁用快捷浮窗', () => {
+        // 油猴菜单（Safari 等无菜单 API 的环境自动跳过）
+        registerMenu('按钮配置', () => Editor.open());
+        registerMenu('语录记事本', () => Notepad.toggle());
+        registerMenu('启用/禁用快捷浮窗', () => {
             const nowDisabled = Store.get('ui_disabled') === 'true';
             Store.set('ui_disabled', nowDisabled ? 'false' : 'true');
             toast(nowDisabled ? '快捷浮窗已启用，刷新页面生效' : '快捷浮窗已关闭，刷新页面生效');
