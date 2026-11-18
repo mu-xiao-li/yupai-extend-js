@@ -13,6 +13,7 @@
 // ==/UserScript==
 
 // 更新
+// 2026-11-18 v1.0.5 取消api硬拼/api/v3，由配置方自己控制api前缀，脚本只复制定死url
 // 2026-11-17 v1.0.5 子按钮弹层超过 9 个自动换列（每列上限 9，以屏幕中间装订位为极限基准），
 //   并加视口边界夹取（多列变宽/任意浮块位置下弹层均完整可见）；
 //   修复专属红包不弹用户名填写/配置无效（recivers 空串数组归一化过滤 + getUser 响应形态兼容 + 解析失败明确报错）；
@@ -1132,7 +1133,7 @@
         // 相对路径补全（相对路径按鱼排拼接）
         buildUrl(ep) {
             const s = String(ep);
-            return s.startsWith('http') ? s : `${API_BASE}/api/v3${s.startsWith('/') ? '' : '/'}${s}`;
+            return s.startsWith('http') ? s : `${API_BASE}${s.startsWith('/') ? '' : '/'}${s}`;
         },
 
         async muliRefreshPage(params) {
