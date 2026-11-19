@@ -3113,12 +3113,7 @@
     function init() {
         installFetchHook();
         injectStyles();
-
-        // 后台预热 token：脚本 document-end 运行，应用首批带 Bearer 的请求（defer 模块发起）
-        // 多在钩子安装前已发出、来不及捕获 → 首次点击会付 ~400ms 刷新代价；
-        // 启动时后台预热（不 await、不阻塞首屏），失败静默——点击时仍会走正常刷新流程
-        Api.token().catch(() => { });
-
+        
         // 统一消息监听单例启动
         MessageWatcher.start();
         MessageActions.init();
