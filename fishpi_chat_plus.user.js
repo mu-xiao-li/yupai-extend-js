@@ -16,7 +16,9 @@
 
 // 更新
 // 2026-11-19 v1.0.7 移除快捷复读按钮 ↲（站点原生 .chat-repeat 已支持直接复读，脚本不再重复实现；
-//   收藏 ⭐ 保留，仍走 v3 取原文入记事本）
+//   收藏 ⭐ 保留，仍走 v3 取原文入记事本）；
+//   修复 token 过期后 401 不自愈：URL请求(v3) 原先完全无401处理（冷存过期→每次点击都401、需手动刷新页面），
+//   现收到401自动强刷 token 静默重试一次；Api.req 的401重试路径补日志；token 刷新失败报错带 HTTP 状态码
 // 2026-11-18 v1.0.6 Safari 系脚本管理器兼容：GM_addStyle 缺失时降级为 createElement('style') 注入，
 //   GM_registerMenuCommand 缺失时静默跳过（功能均有浮块/界面入口，不丢功能）；
 //   移除双击头像艾特（站点原生已收编该功能，脚本不再重复实现）；
@@ -248,7 +250,7 @@
                     return this._token;
                 }
                 // console.log(`[fpcp] token 刷新失败 ${ms}ms status=${rsp.status}`);
-                throw new Error('accessToken 获取失败');
+                throw new Error(`accessToken 获取失败(status=${rsp.status})`);
             })().finally(() => { this._refreshing = null; });
             return this._refreshing;
         },
@@ -275,6 +277,8 @@
                 this._token = null;
                 retried = true;
                 rsp = await doFetch();
+                // 只在 401 时打印（平时零噪音），用于确认静默重试结果
+                console.log(`[fpcp] 401，已静默刷新token重试 → ${path} status=${rsp.status}`);
             }
             // 耗时埋点：token 段（含刷新/401 重试）与 API 往返分开计，定位"点击后延迟"来源
             // console.log(`[fpcp] ${fetchOpt.method || 'GET'} ${path} 总${(performance.now() - t0).toFixed(0)}ms = token ${tokenMs.toFixed(0)}ms + fetch ${fetchMs.toFixed(0)}ms，status=${rsp.status}${retried ? '（401已重试）' : ''}`);
@@ -847,7 +851,23 @@
                 try {
                     const body = methodHasBody(r.method) ? this.buildRequestBody(r) : null;
                     const opt = await this.buildFetchOpt(r.method, r.endpoint, body, bodyTypeContentType(r.bodyType), r.headers);
-                    const rsp = await fetch(opt.url, opt.init);
+                    let rsp = await fetch(opt.url, opt.init);
+                    // 401=token 失效：静默强刷一次并重试（门控与 buildFetchOpt 同款：
+                    // 站内 + v3 才带 Bearer，才值得刷 token 重试——外部域名零凭证永不动；
+                    // 重试仍失败则保留响应用于下方报错，不会死循环）
+                    const r401u = opt.url;
+                    const r401same = /^https:\/\/(www\.)?fishpi\.cn(\/|$)/i.test(r401u) || r401u.startsWith(location.origin);
+                    if (rsp.status === 401 && r401same && /\/api\/v3\//.test(r401u)) {
+                        try {
+                            await Api.token(true);   // force：绕过缓存强制重新签发
+                            const opt2 = await this.buildFetchOpt(r.method, r.endpoint, body, bodyTypeContentType(r.bodyType), r.headers);
+                            const rsp2 = await fetch(opt2.url, opt2.init);
+                            console.log(`[fpcp] URL请求401，已静默刷新token重试 → HTTP ${rsp2.status}`);
+                            rsp = rsp2;
+                        } catch (e) {
+                            console.warn('[fpcp] URL请求401刷新重试失败:', e && e.message ? e.message : e);
+                        }
+                    }
                     if (!rsp.ok) toast(`URL请求${tag}：HTTP ${rsp.status}`);
                     else okCount++;
                 } catch (e) {
