@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         鱼排聊天增强
 // @namespace    https://fishpi.cn
-// @version      1.0.6
-// @description  新版聊天室增强：快捷复读、快捷消息按钮、表情包增强、语录记事本（全新重构版）
+// @version      1.0.7
+// @description  新版聊天室增强：快捷消息按钮、表情包增强、语录记事本（全新重构版）
 // @author       muli
 // @match        https://new.fishpi.cn/cr
 // @icon         https://file.fishpi.cn/2025/11/blob-4d0e46ad.png?imageView2/1/w/48/h/48/interlace/0/q/100
@@ -15,13 +15,17 @@
 // ==/UserScript==
 
 // 更新
+// 2026-11-19 v1.0.7 移除快捷复读按钮 ↲（站点原生 .chat-repeat 已支持直接复读，脚本不再重复实现；
+//   收藏 ⭐ 保留，仍走 v3 取原文入记事本）
 // 2026-11-18 v1.0.6 Safari 系脚本管理器兼容：GM_addStyle 缺失时降级为 createElement('style') 注入，
 //   GM_registerMenuCommand 缺失时静默跳过（功能均有浮块/界面入口，不丢功能）；
 //   移除双击头像艾特（站点原生已收编该功能，脚本不再重复实现）；
 //   移除双击消息体引用与双击图片引用（站点原生已收编双击引用，脚本不再重复实现）；
 //   修复红包误报"接口响应格式异常"：v3 错误响应 code 可能为字符串（unauthorized/captcha 等），
 //   改为透出服务端 msg，格式异常时附带状态码+响应原文（前端逆向自线上 bundle）；
-//   猜拳红包请求体对齐线上原生（不带 count）；红包金额/个数/留言/手势按 bundle 校验规则（fa）前置校验
+//   猜拳红包请求体对齐线上原生（不带 count）；红包金额/个数/留言/手势按 bundle 校验规则（fa）前置校验；
+//   发送/复读链路加耗时埋点（console.log：token 段 + fetch 段 + 401 重试标记 + 复读全流程），定位点击后延迟来源；
+//   启动时后台预热 token（实测首次点击付 ~393ms 刷新代价：应用首批请求早于钩子安装、捕获不到 Bearer）
 // 2026-11-18 v1.0.5 取消api硬拼/api/v3，由配置方自己控制api前缀，脚本只负责定死url
 //   凭证双轨自动分流（新旧 token 不通用）：/api/v3/* 带新版 Bearer token + 幂等键，其他站内路径带旧版凭证
 //   （Label.csrfToken 头 + Label.node.apiKey 参数 + Cookie），外部域名不带任何凭证，自定义请求头可覆盖；
@@ -74,7 +78,7 @@
     // ================== 常量 ==================
     const API_BASE = 'https://fishpi.cn';
     const CLIENT_US = "Web/沐里爱睡觉";
-    const VERSION_US = "v1.0.6";
+    const VERSION_US = "v1.0.7";
     const CLIENT_TAG = CLIENT_US + VERSION_US;
     const NS = 'fpcp_';                   // localStorage 前缀
     const DEFAULT_POSITION = { x: 20, y: 20 };
@@ -229,6 +233,7 @@
             if (this._token && !force) return this._token;
             if (this._refreshing) return this._refreshing;
             this._refreshing = (async () => {
+                const t0 = performance.now();
                 const rsp = await fetch(`${API_BASE}/api/v3/auth/refresh`, {
                     method: 'POST',
                     credentials: 'include',
@@ -236,10 +241,13 @@
                     body: '{}'
                 });
                 const j = await rsp.json().catch(() => null);
+                const ms = (performance.now() - t0).toFixed(0);
                 if (j && j.code === 0 && j.data && typeof j.data.accessToken === 'string') {
                     this._token = j.data.accessToken;
+                    // console.log(`[fpcp] token 刷新成功 ${ms}ms`);
                     return this._token;
                 }
+                // console.log(`[fpcp] token 刷新失败 ${ms}ms status=${rsp.status}`);
                 throw new Error('accessToken 获取失败');
             })().finally(() => { this._refreshing = null; });
             return this._refreshing;
@@ -248,18 +256,28 @@
         // 通用 v3 请求：自动带 Bearer，401 自动刷新一次
         async req(path, opt = {}) {
             const { __forceToken, ...fetchOpt } = opt;
+            let tokenMs = 0, fetchMs = 0, retried = false;
             const doFetch = async () => {
+                const t1 = performance.now();
                 const token = await this.token(!!__forceToken);
+                tokenMs += performance.now() - t1;
                 const headers = Object.assign({ 'Content-Type': 'application/json' }, fetchOpt.headers || {}, {
                     'Authorization': `Bearer ${token}`
                 });
-                return fetch(API_BASE + path, Object.assign({}, fetchOpt, { headers, credentials: 'include' }));
+                const t2 = performance.now();
+                const rsp = await fetch(API_BASE + path, Object.assign({}, fetchOpt, { headers, credentials: 'include' }));
+                fetchMs += performance.now() - t2;
+                return rsp;
             };
+            const t0 = performance.now();
             let rsp = await doFetch();
             if (rsp.status === 401) {
                 this._token = null;
+                retried = true;
                 rsp = await doFetch();
             }
+            // 耗时埋点：token 段（含刷新/401 重试）与 API 往返分开计，定位"点击后延迟"来源
+            // console.log(`[fpcp] ${fetchOpt.method || 'GET'} ${path} 总${(performance.now() - t0).toFixed(0)}ms = token ${tokenMs.toFixed(0)}ms + fetch ${fetchMs.toFixed(0)}ms，status=${rsp.status}${retried ? '（401已重试）' : ''}`);
             // 先读文本再解析。v3 错误响应的 code 可能是字符串（如 unauthorized/captcha——
             // 线上 bundle http 客户端按 String(code) 处理），只有缺 code/非 JSON 才算格式异常；
             // 有 code 一律走业务报错透出服务端 msg，不再把字符串码误报成"格式异常"
@@ -511,7 +529,7 @@
         return true;
     }
 
-    // ================== 消息快捷按钮：复读 ↲➲ + 收藏 ⭐ ==================
+    // ================== 消息快捷按钮：收藏 ⭐ ==================
     const MessageActions = {
         init() {
             // 新消息到达时挂按钮（订阅唯一的 MessageWatcher）
@@ -529,24 +547,12 @@
         decorate(article) {
             if (article.dataset.fpcpDecorated === '1') return;
             article.dataset.fpcpDecorated = '1';
-            if (article.classList.contains('is-self')) return;   // 自己的消息不挂复读/收藏
+            if (article.classList.contains('is-self')) return;   // 自己的消息不挂收藏
 
             // 按钮挂在消息气泡（fp-bubble）对角上——气泡位置由内容决定，
             // 不受用户名/勋章长短影响，位置直观可预测
             const bubble = article.querySelector('.fp-bubble') || article.querySelector('.message-stack');
             if (!bubble) return;
-
-            // 复读按钮（气泡右上角角心，常态化显示）
-            const repeatBtn = el('button', {
-                class: 'fpcp-msg-btn fpcp-repeat-btn',
-                title: '复读这条消息',
-                text: '↲↲',
-                onclick: (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    this.repeat(article);
-                }
-            });
 
             // 收藏按钮（气泡左下角角心，小星星 ⭐）
             const favBtn = el('button', {
@@ -560,31 +566,7 @@
                 }
             });
 
-            bubble.appendChild(repeatBtn);
             bubble.appendChild(favBtn);
-        },
-
-        // 复读：取消息原文 → 去旧尾巴 → 发送
-        async repeat(article) {
-            const info = MsgDom.parse(article);
-            if (!info || !info.id) return;
-            // 音乐/红包消息禁止复读
-            if (article.querySelector('.music-player') || article.querySelector('.hongbao__item') || article.querySelector('[class*="red-packet"]')) {
-                toast('善良的小鱼油，别复读音乐🎵/红包🧧哦！！！！！');
-                return;
-            }
-            try {
-                const msg = await Api.getMessage(info.id);
-                const content = stripOldTail(msg.content || '');
-                if (!content.trim()) {
-                    toast('该消息没有可复读的内容');
-                    return;
-                }
-                await Api.send(content);
-                toast('复读成功');
-            } catch (e) {
-                toast('复读失败：' + (e && e.message ? e.message : e));
-            }
         },
 
         // 收藏：取消息原文（原始 markdown）→ 入记事本
@@ -2429,7 +2411,7 @@
             ]));
         },
 
-        // 从消息收藏（复读按钮区 ⭐ 调用）
+        // 从消息收藏（⭐ 调用）
         addFromMessage(content, author) {
             const title = prompt('请输入语录标题（留空自动截取内容）', '');
             if (title === null) return;   // 取消
@@ -2826,9 +2808,6 @@
     padding: 0; z-index: 20; color: inherit;
 }
 .fpcp-msg-btn:hover { background: rgba(51, 154, 240, 0.9); transform: scale(1.12); box-shadow: 0 2px 8px rgba(51, 154, 240, 0.45); }
-/* 复读：气泡右上角，1/3 悬于气泡外、2/3 在内（0.72 → hover 1） */
-.fpcp-repeat-btn { top: 0; right: 0; transform: translate(50%, -30%); opacity: .72; }
-.fpcp-repeat-btn:hover { opacity: 1; transform: translate(50%, -30%) scale(1.12); }
 /* 收藏星：气泡左下角角心（一半悬于消息体外），hover 显示 */
 .fpcp-fav-btn { bottom: 0; left: 0; transform: translate(-50%, 50%); opacity: 0; }
 .fpcp-fav-btn:hover { transform: translate(-50%, 50%) scale(1.12); }
@@ -3114,6 +3093,11 @@
     function init() {
         installFetchHook();
         injectStyles();
+
+        // 后台预热 token：脚本 document-end 运行，应用首批带 Bearer 的请求（defer 模块发起）
+        // 多在钩子安装前已发出、来不及捕获 → 首次点击会付 ~400ms 刷新代价；
+        // 启动时后台预热（不 await、不阻塞首屏），失败静默——点击时仍会走正常刷新流程
+        Api.token().catch(() => { });
 
         // 统一消息监听单例启动
         MessageWatcher.start();
