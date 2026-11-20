@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         鱼排聊天增强
 // @namespace    https://fishpi.cn
-// @version      1.0.7
+// @version      1.0.8
 // @description  新版聊天室增强：快捷消息按钮、表情包增强、语录记事本（全新重构版）
 // @author       muli
 // @match        https://new.fishpi.cn/cr
@@ -15,13 +15,20 @@
 // ==/UserScript==
 
 // 更新
+// 2026-11-20 v1.0.8 新增 token 共享广播（fpcp:token 事件 + window.__fpcp_token，token 变化才发），
+//   订阅方（fishpi_hongbao）复用避免各自 refresh 重复轮换登录 Cookie；本次未升版
+//   浮块/记事本拖拽加安全区夹取：导航条在最上层，拖动条被导航盖住就抓不回（曾只能清浏览器缓存）——
+//   拖拽全程与恢复位置都夹在"导航下缘~视口内"，存过的死区坐标加载时自动捞回，双击复位同样夹取
+// 2026-11-20 v1.0.7 新增跨脚本消息总线对外广播（fpcp:hub-hello 启动宣告 / fpcp:hub-beat 每5s心跳 /
+//   fpcp:chat-msg 新消息数组），供红包板块（fishpi_hongbao）等脚本共用监听、避免多脚本重复监听；
+//   实测 client 自定义签名可用（更正 v1.0.0 的"强校验"结论）；本次未升版，随红包板块重构一并提交
 // 2026-11-19 v1.0.7 移除快捷复读按钮 ↲（站点原生 .chat-repeat 已支持直接复读，脚本不再重复实现；
 //   收藏 ⭐ 保留，仍走 v3 取原文入记事本）；
 //   修复 token 过期后 401 不自愈：URL请求(v3) 原先完全无401处理（冷存过期→每次点击都401、需手动刷新页面），
 //   现收到401静默换 token 重试一次；Api.req 的401重试路径补日志；token 刷新失败报错带 HTTP 状态码；
 //   token 改"页面共享授权优先"（作者确认页面授权共用、不需要重新申请）：fetch 钩子 document-start 立即安装，
 //   在应用首批请求前捕获页面 accessToken 直接复用；refresh 换取降为最后兜底（会轮换登录 Cookie、有踢下线风险——
-//   启动预热正是这样把 Vue 会话挤掉线的，预热已移除）；401 仅作废用过的旧 token，页面已换新则直接复用
+//   启动预热正是这样把 Vue 会话挤掉线的，预热已移除）；401 仅作废用过的旧 token，页面已换新则直接复用；
 // 2026-11-18 v1.0.6 Safari 系脚本管理器兼容：GM_addStyle 缺失时降级为 createElement('style') 注入，
 //   GM_registerMenuCommand 缺失时静默跳过（功能均有浮块/界面入口，不丢功能）；
 //   移除双击头像艾特（站点原生已收编该功能，脚本不再重复实现）；
@@ -83,10 +90,39 @@
     // ================== 常量 ==================
     const API_BASE = 'https://fishpi.cn';
     const CLIENT_US = "Web/沐里爱睡觉";
-    const VERSION_US = "v1.0.7";
+    const VERSION_US = "v1.0.8";
     const CLIENT_TAG = CLIENT_US + VERSION_US;
     const NS = 'fpcp_';                   // localStorage 前缀
     const DEFAULT_POSITION = { x: 20, y: 20 };
+
+    // ================== 浮层安全区（防"拖进导航底"死区） ==================
+    // 网站导航条在最上层（z 高于浮块）：浮块的拖动条一旦被导航盖住就再也抓不回来
+    // （曾只能清浏览器缓存）。拖拽全程与恢复位置都夹进安全区：导航下缘 ~ 视口内。
+    function navSafeTop() {
+        let top = 0;
+        try {
+            const nav = document.querySelector('header') || document.querySelector('nav');
+            if (nav) {
+                const r = nav.getBoundingClientRect();
+                // 只认顶部通栏（高度 sanity 防 header 包住整页的布局）；
+                // 导航滑出屏幕（r.bottom<=0）时按其固有高度预留，防止它滑回来又盖住
+                const h = Math.min(nav.offsetHeight || r.height || 0, 160);
+                top = (r.bottom > 0 && r.top <= 8) ? Math.min(r.bottom, 160) : (r.top <= 8 ? h : 0);
+            }
+        } catch (e) { }
+        return Math.round(Math.max(0, top));
+    }
+
+    function clampPanelPos(x, y) {
+        const minY = navSafeTop();
+        // 保底露出尺寸：宽 80px / 高 40px（头部拖动条所在），确保永远可抓
+        const maxX = Math.max(0, window.innerWidth - 80);
+        const maxY = Math.max(minY, window.innerHeight - 40);
+        return {
+            x: Math.min(Math.max(0, Number(x) || 0), maxX),
+            y: Math.min(Math.max(minY, Number(y) || minY), maxY)
+        };
+    }
 
     // ================== 基础工具 ==================
     const $ = (sel, root) => (root || document).querySelector(sel);
@@ -252,6 +288,7 @@
                 const ms = (performance.now() - t0).toFixed(0);
                 if (j && j.code === 0 && j.data && typeof j.data.accessToken === 'string') {
                     this._token = j.data.accessToken;
+                    announceToken(this._token);
                     // console.log(`[fpcp] token 刷新成功 ${ms}ms`);
                     return this._token;
                 }
@@ -392,7 +429,10 @@
                 } else if (input && typeof input.headers !== 'undefined') {
                     try { auth = new Headers(input.headers).get('Authorization'); } catch (e) { }
                 }
-                if (auth && auth.startsWith('Bearer ')) Api._token = auth.slice(7);
+                if (auth && auth.startsWith('Bearer ')) {
+                    Api._token = auth.slice(7);
+                    announceToken(Api._token);
+                }
 
                 // 发消息去旧尾巴
                 const url = typeof input === 'string' ? input : (input && input.url) || '';
@@ -430,6 +470,8 @@
             for (const h of handlers) {
                 try { h.fn(nodes); } catch (e) { console.warn('[fishpi_chat_plus] watcher handler error:', e); }
             }
+            // 对外广播（跨脚本消息总线），供红包板块等脚本共用监听
+            try { hubBroadcast(nodes); } catch (e) { }
         }
 
         function schedule(node) {
@@ -450,6 +492,8 @@
                 }
             });
             observer.observe(document.body, { childList: true, subtree: true });
+            // 宣告 hub 上线并开始心跳，让订阅方（红包板块等）切到共用监听
+            hubStart();
         }
 
         return {
@@ -474,6 +518,84 @@
             }
         };
     })();
+
+    // ================== 跨脚本消息总线（对外广播） ==================
+    // 本脚本是消息监听 hub：唯一 observer 解析一次，广播给其他脚本（如 fishpi_hongbao）共用，
+    // 避免多个脚本各自开监听。事件（detail 均为纯 JSON 字段，跨沙箱安全）：
+    //   fpcp:hub-hello  启动宣告（订阅方收到后停自己的监听）
+    //   fpcp:hub-beat   每 5s 心跳（订阅方 15s 静默则回退自开监听）
+    //   fpcp:chat-msg   新消息数组 [{id,userName,nickname,isSelf,time,avatar,html,text}]
+    //                    html=.fp-bubble 内层 HTML（含红包卡片等），text=纯文本
+    let _hubBeatTimer = null;
+
+    function hubParseEntry(article) {
+        const rawId = article.id || '';
+        const id = rawId.startsWith('chatroom') ? rawId.slice(8) : '';
+        const avatarLink = article.querySelector('a.fp-avatar-frame');
+        let userName = '';
+        if (avatarLink) {
+            userName = avatarLink.getAttribute('data-user-card') || '';
+            if (!userName) {
+                const href = avatarLink.getAttribute('href') || '';
+                const m = href.match(/\/member\/([^/?#]+)/);
+                if (m) userName = decodeURIComponent(m[1]);
+            }
+        }
+        const nameEl = article.querySelector('.chat-author-name');
+        const img = article.querySelector('img.fp-avatar');
+        const t = article.querySelector('.foot time');
+        const bubble = article.querySelector('.fp-bubble');
+        return {
+            id, userName,
+            nickname: nameEl ? nameEl.textContent.trim() : '',
+            isSelf: article.classList.contains('is-self'),
+            time: t ? t.textContent.trim() : '',
+            avatar: img ? img.src : '',
+            html: bubble ? bubble.innerHTML : '',
+            text: bubble ? bubble.textContent : ''
+        };
+    }
+
+    function hubBroadcast(nodes) {
+        const msgs = [];
+        const seen = new Set();
+        for (const node of nodes) {
+            if (!node || node.nodeType !== Node.ELEMENT_NODE) continue;
+            const arts = [];
+            if (node.matches && node.matches('article.fp-msg')) arts.push(node);
+            if (node.querySelectorAll) arts.push(...node.querySelectorAll('article.fp-msg'));
+            for (const a of arts) {
+                if (seen.has(a)) continue;
+                seen.add(a);
+                const p = hubParseEntry(a);
+                if (p.id) msgs.push(p);
+            }
+        }
+        if (msgs.length) window.dispatchEvent(new CustomEvent('fpcp:chat-msg', { detail: msgs }));
+    }
+
+    function hubStart() {
+        try {
+            window.dispatchEvent(new CustomEvent('fpcp:hub-hello', { detail: { v: 1 } }));
+            if (!_hubBeatTimer) {
+                _hubBeatTimer = setInterval(() => {
+                    try { window.dispatchEvent(new CustomEvent('fpcp:hub-beat', { detail: { v: 1 } })); } catch (e) { }
+                }, 5000);
+            }
+        } catch (e) { }
+    }
+
+    // token 共享：本脚本拿到 token 后广播一次（变化才发），订阅方（fishpi_hongbao）可直接复用，
+    // 避免各自 refresh 重复轮换登录 Cookie。token 只在本页流转，与页面自带 token 同信任域。
+    let _announcedToken = null;
+    function announceToken(t) {
+        try {
+            if (!t || t === _announcedToken) return;
+            _announcedToken = t;
+            window.__fpcp_token = t;
+            window.dispatchEvent(new CustomEvent('fpcp:token', { detail: { token: t } }));
+        } catch (e) { }
+    }
 
     // ================== 消息 DOM 解析 ==================
     // 新版消息结构：
@@ -1404,7 +1526,8 @@
                 c.classList.remove('fpcp-docked');
                 document.body.appendChild(c);
                 c.style.right = '';
-                const pos = Store.get('pos', DEFAULT_POSITION);
+                const savedPos = Store.get('pos', DEFAULT_POSITION);
+                const pos = clampPanelPos(savedPos.x, savedPos.y);
                 c.style.left = pos.x + 'px';
                 c.style.top = pos.y + 'px';
                 if (handle) handle.style.visibility = '';
@@ -1575,15 +1698,17 @@
             let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
             let rafId = null, pendingX = 0, pendingY = 0;
 
-            // 恢复位置
-            const pos = Store.get('pos', DEFAULT_POSITION);
+            // 恢复位置（夹进安全区：历史存过的导航底下死区坐标会自动捞回来）
+            const savedPos = Store.get('pos', DEFAULT_POSITION);
+            const pos = clampPanelPos(savedPos.x, savedPos.y);
             container.style.left = pos.x + 'px';
             container.style.top = pos.y + 'px';
 
             const applyPos = () => {
                 rafId = null;
-                container.style.left = pendingX + 'px';
-                container.style.top = pendingY + 'px';
+                const s = clampPanelPos(pendingX, pendingY);
+                container.style.left = s.x + 'px';
+                container.style.top = s.y + 'px';
             };
 
             handle.addEventListener('mousedown', (e) => {
@@ -1614,11 +1739,12 @@
                 Store.set('pos', { x: container.offsetLeft, y: container.offsetTop });
             });
 
-            // 双击把手复位
+            // 双击把手复位（同样夹进安全区）
             handle.addEventListener('dblclick', () => {
-                container.style.left = DEFAULT_POSITION.x + 'px';
-                container.style.top = DEFAULT_POSITION.y + 'px';
-                Store.set('pos', DEFAULT_POSITION);
+                const s = clampPanelPos(DEFAULT_POSITION.x, DEFAULT_POSITION.y);
+                container.style.left = s.x + 'px';
+                container.style.top = s.y + 'px';
+                Store.set('pos', s);
                 toast('浮块位置已复位');
             });
         }
@@ -2479,8 +2605,9 @@
             let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
             const pos = Store.get('np_pos', null);
             if (pos) {
-                panel.style.left = pos.x + 'px';
-                panel.style.top = pos.y + 'px';
+                const s = clampPanelPos(pos.x, pos.y);   // 同样夹进安全区，防死区坐标
+                panel.style.left = s.x + 'px';
+                panel.style.top = s.y + 'px';
             }
             handle.addEventListener('mousedown', (e) => {
                 e.preventDefault();
@@ -2490,8 +2617,9 @@
             });
             document.addEventListener('mousemove', (e) => {
                 if (!dragging) return;
-                panel.style.left = (origX + e.clientX - startX) + 'px';
-                panel.style.top = (origY + e.clientY - startY) + 'px';
+                const s = clampPanelPos(origX + e.clientX - startX, origY + e.clientY - startY);
+                panel.style.left = s.x + 'px';
+                panel.style.top = s.y + 'px';
             });
             document.addEventListener('mouseup', () => {
                 if (!dragging) return;
