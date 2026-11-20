@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         鱼排聊天增强
 // @namespace    https://fishpi.cn
-// @version      1.0.8
+// @version      1.0.9
 // @description  新版聊天室增强：快捷消息按钮、表情包增强、语录记事本（全新重构版）
 // @author       muli
 // @match        https://new.fishpi.cn/cr
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 // 更新
+// 2026-11-20 v1.0.9 装订位可自定义（侧栏顺序用户可自定义，定死"清风明月上面"会错位）：
+//   装订后拖动条恢复可用，在侧栏列容器（.chat-sidebar）内拖动换位——插入指示线显示落点，不跟手位移零布局抖动；
+//   换位后记锚点（在哪个模块之后/最前，用原生 data-sidebar-module 模块 id），刷新/重渲染后按锚点找回；
+//   锚点模块不在（被关/改版）或首次装订 → 装容器末尾
 // 2026-11-20 v1.0.8 新增 token 共享广播（fpcp:token 事件 + window.__fpcp_token，token 变化才发），
 //   订阅方（fishpi_hongbao）复用避免各自 refresh 重复轮换登录 Cookie；本次未升版
 //   浮块/记事本拖拽加安全区夹取：导航条在最上层，拖动条被导航盖住就抓不回（曾只能清浏览器缓存）——
@@ -90,7 +94,7 @@
     // ================== 常量 ==================
     const API_BASE = 'https://fishpi.cn';
     const CLIENT_US = "Web/沐里爱睡觉";
-    const VERSION_US = "v1.0.8";
+    const VERSION_US = "v1.0.9";
     const CLIENT_TAG = CLIENT_US + VERSION_US;
     const NS = 'fpcp_';                   // localStorage 前缀
     const DEFAULT_POSITION = { x: 20, y: 20 };
@@ -122,6 +126,23 @@
             x: Math.min(Math.max(0, Number(x) || 0), maxX),
             y: Math.min(Math.max(minY, Number(y) || minY), maxY)
         };
+    }
+
+    // ================== 装订锚点（侧栏可自定义排序，位置记"在哪个模块之后"） ==================
+    // 侧栏子区块顺序用户可自定义（原生九点手柄排序），固定"清风明月上面"会因用户改序而不理想——
+    // 改为锚点记忆：拖动换位后记下前一个兄弟的稳定标识，恢复时按标识找回，找不到装末尾
+    function dockContainer() {
+        return document.querySelector('aside.sidebar-layout.chat-sidebar') || document.querySelector('.chat-sidebar');
+    }
+
+    // 兄弟节点的稳定标识：优先原生 data-sidebar-module（模块 id：profile/breezemoons…，bundle 实锤），退化 id→class→tag
+    function dockNodeKey(el) {
+        if (!el || el.nodeType !== 1) return '';
+        const mod = el.getAttribute && el.getAttribute('data-sidebar-module');
+        if (mod) return 'm:' + mod;
+        if (el.id) return 'i:' + el.id;
+        const cls = el.classList && Array.from(el.classList).filter(c => !/^fpcp-/.test(c))[0];
+        return cls ? 'c:' + cls : 't:' + el.tagName.toLowerCase();
     }
 
     // ================== 基础工具 ==================
@@ -1518,7 +1539,8 @@
                 c.style.top = '';
                 c.style.right = '';
                 c.style.bottom = '';
-                if (handle) handle.style.visibility = 'hidden';
+                // 拖动条保留可用：装订态拖动 = 侧栏内换位（锚点记忆）
+                if (handle) handle.title = '拖动调整位置（侧栏内换位）';
                 this._startDockGuard();
                 this._ensureDocked();
             } else {
@@ -1530,20 +1552,101 @@
                 const pos = clampPanelPos(savedPos.x, savedPos.y);
                 c.style.left = pos.x + 'px';
                 c.style.top = pos.y + 'px';
-                if (handle) handle.style.visibility = '';
+                if (handle) handle.title = '拖拽移动（双击复位）';
             }
         },
 
-        // 装订目标：侧栏 .chat-sidebar 内、清风明月（section.sidebar-tabs）上方的中间位置
+        // 装订目标：侧栏列容器内、按锚点定位（不再定死"清风明月上面"——侧栏顺序用户可自定义）
         _ensureDocked() {
             const c = this.container;
             if (!c) return;
-            const sidebar = document.querySelector('aside.sidebar-layout.chat-sidebar') || document.querySelector('.chat-sidebar');
+            const sidebar = dockContainer();
             if (!sidebar) return;   // 侧栏不在（未渲染/已离开页面），等看护触发重试
             if (sidebar.contains(c) && c.isConnected) return;   // 已就位
-            const tabs = sidebar.querySelector('section.sidebar-tabs');
-            if (tabs) sidebar.insertBefore(c, tabs);
-            else sidebar.appendChild(c);
+            this._insertAtAnchor(sidebar, c);
+        },
+
+        // 按锚点插入：anchor='' 最前；anchor=key 插在匹配兄弟之后；锚点丢失/无记录（首装）→ 容器末尾
+        _insertAtAnchor(sidebar, c) {
+            const rec = Store.get('dock_pos', null);
+            const anchor = rec && rec.anchor !== undefined ? rec.anchor : null;
+            if (anchor === '') {
+                sidebar.insertBefore(c, sidebar.firstChild);
+                return;
+            }
+            if (anchor) {
+                for (const child of Array.from(sidebar.children)) {
+                    if (child === c) continue;
+                    if (dockNodeKey(child) === anchor) {
+                        if (child.nextSibling) sidebar.insertBefore(c, child.nextSibling);
+                        else sidebar.appendChild(c);
+                        return;
+                    }
+                }
+            }
+            sidebar.appendChild(c);   // 锚点找不到（模块被关/改版）或首次装订 → 末尾
+        },
+
+        // 记录锚点（= 当前前一个兄弟的稳定标识；最前记空串）。只在用户拖动换位后调用——
+        // 记录的是用户意图，锚点丢失时的末尾兜底不覆盖它（模块可能只是暂未渲染）
+        _saveDockPos() {
+            const c = this.container;
+            if (!c) return;
+            const prev = c.previousElementSibling;
+            Store.set('dock_pos', { anchor: prev ? dockNodeKey(prev) : '' });
+        },
+
+        // 装订态拖动 = 侧栏容器内换位：指示线显示落点（插在哪个区块之后/最前/末尾），不跟手位移、零布局抖动
+        _startDockReorder(e) {
+            const container = this.container;
+            const sidebar = dockContainer();
+            if (!container || !sidebar) return;
+            e.preventDefault();
+            const rect = sidebar.getBoundingClientRect();
+            const indicator = el('div', { class: 'fpcp-drop-line' });
+            indicator.style.left = rect.left + 'px';
+            indicator.style.width = rect.width + 'px';
+            document.body.appendChild(indicator);
+            container.classList.add('fpcp-dragging');
+            let target = null;   // 落点：null=末尾，否则插在该子元素之前
+
+            const children = () => Array.from(sidebar.children).filter(ch => ch !== container);
+
+            const placeIndicator = (before) => {
+                if (before) {
+                    indicator.style.top = (before.getBoundingClientRect().top - 2) + 'px';
+                } else {
+                    const kids = children();
+                    const last = kids[kids.length - 1];
+                    indicator.style.top = (last ? last.getBoundingClientRect().bottom + 2 : rect.top) + 'px';
+                }
+            };
+
+            const onMove = (ev) => {
+                // 间隙落点：低于某子元素中线 → 插它后面；全高一遍 → 末尾
+                let before = null;
+                for (const ch of children()) {
+                    const r = ch.getBoundingClientRect();
+                    if (ev.clientY < r.top + r.height / 2) { before = ch; break; }
+                }
+                target = before;
+                placeIndicator(before);
+            };
+
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                indicator.remove();
+                container.classList.remove('fpcp-dragging');
+                if (target) sidebar.insertBefore(container, target);
+                else sidebar.appendChild(container);
+                this._saveDockPos();
+            };
+
+            placeIndicator(children()[0] || null);
+            target = children()[0] || null;
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
         },
 
         // 装订存活看护：Vue 重渲染/水合会把外来节点从侧栏清掉，被清后自动重新装订。
@@ -1713,6 +1816,11 @@
 
             handle.addEventListener('mousedown', (e) => {
                 e.preventDefault();
+                // 装订态：换位模式（指示线落点），不走浮动拖拽
+                if (container.classList.contains('fpcp-docked')) {
+                    this._startDockReorder(e);
+                    return;
+                }
                 dragging = true;
                 startX = e.clientX;
                 startY = e.clientY;
@@ -3023,6 +3131,12 @@
     background: var(--fpcp-card); border: 1px solid var(--fpcp-border);
     border-radius: 8px; padding: 8px; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
     max-height: calc(100vh - 16px);
+}
+/* 装订态换位的插入指示线（fixed 覆盖层，不进布局零抖动） */
+.fpcp-drop-line {
+    position: fixed; z-index: 10050;
+    border-top: 2px dashed #339af0;
+    pointer-events: none;
 }
 /* 装订（进入侧栏）态：静态卡片，融入侧栏模块 */
 #fpcp-quick-actions.fpcp-docked {
