@@ -2,7 +2,7 @@
 // @name         鱼排消息云·关键词监听（新版）
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      2.0.0
+// @version      2.0.1
 // @description  新版聊天室关键词/指定用户/@我监听：消息云提醒、聚合记录、上下文追溯（由 message_listening v1.1.0 重构）
 // @author       muli 定制
 // @match        https://new.fishpi.cn/cr
@@ -14,7 +14,7 @@
 // @updateURL    https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_message_listening_plus.user.js
 // ==/UserScript==
 // 旧版（fishpi.cn/cr 旧聊天室）演进史见 message_listening.user.js（v1.0.0 ~ v1.1.0），旧文件冻结不动
-// 2026-11-20 v2.0.0 首轮真机反馈：详情/上下文气泡复刻系统消息观感（--fp-hover 底+描边+非对称圆角+底部内阴影，
+// 2026-11-20 v2.0.1 首轮真机反馈：详情/上下文气泡复刻系统消息观感（--fp-hover 底+描边+非对称圆角+底部内阴影，
 //   自己消息 --fp-self 绿底靠右、头像改系统圆角方框、meta 改「昵称 · 时间」）；
 //   引用/跳转原消息后自动关闭弹层（让位给输入框/聊天区）；文件更名为 fishpi_message_listening_plus.user.js
 // 2026-11-20 v2.0.0 重构适配新版聊天室（new.fishpi.cn/cr）：
@@ -32,7 +32,7 @@
     'use strict';
 
     // ================== 常量 ==================
-    const VERSION_US = 'v2.0.0';
+    const VERSION_US = 'v2.0.1';
     const API_BASE = 'https://fishpi.cn';
     const NS = 'mlp_';                  // 样式/节点命名空间
     const HUB_MSG_EVENT = 'fpcp:chat-msg';
@@ -921,7 +921,7 @@
 
 /* ---------- 三层弹层（详情/上下文/配置共用底） ---------- */
 .${NS}modal {
-  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  position: fixed; top: 10%; left: 27%; width: 46%;
   background: rgba(0, 0, 0, 0.6); z-index: 20000;
   display: flex; align-items: center; justify-content: center;
   animation: ${NS}fade .16s ease-out;
@@ -933,7 +933,15 @@
   max-height: 82vh; border-radius: 20px; overflow: auto; padding: 20px;
   animation: ${NS}pop .18s ease-out; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
 }
-.${NS}modal h3 { margin-top: 0; display: flex; align-items: center; gap: 8px; }
+.${NS}box { position: relative; max-width: 92vw; }
+.${NS}close-x {
+  position: absolute; top: 10px; right: 12px; z-index: 6;
+  width: 30px; height: 30px; border: none; border-radius: 50%;
+  background: var(--${NS}subtle); color: var(--${NS}text2); font-size: 16px;
+  cursor: pointer; transition: background .15s ease, color .15s ease, transform .15s ease;
+}
+.${NS}close-x:hover { background: rgba(255, 71, 87, 0.15); color: #ff4757; transform: scale(1.08); }
+.${NS}modal h3 { margin-top: 0; display: flex; align-items: center; gap: 8px; padding-right: 36px; }
 
 /* ---------- 消息气泡（复刻系统消息观感：--fp-hover 底/描边/非对称圆角/底部内阴影，自消息 --fp-self 绿底） ---------- */
 .${NS}msg-row {
@@ -1294,9 +1302,19 @@
         const modal = document.createElement('div');
         modal.className = NS + 'modal';
         if (zIndex) modal.style.zIndex = zIndex;
+        // box 包住 card：关闭叉挂在 box 上，不受 card.innerHTML 整体重写影响
+        const box = document.createElement('div');
+        box.className = NS + 'box';
         const card = document.createElement('div');
         card.className = NS + 'card-box';
-        modal.appendChild(card);
+        const closeBtn = document.createElement('button');
+        closeBtn.className = NS + 'close-x';
+        closeBtn.textContent = '✕';
+        closeBtn.title = '关闭';
+        closeBtn.addEventListener('click', () => modal.remove());
+        box.appendChild(card);
+        box.appendChild(closeBtn);
+        modal.appendChild(box);
         modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
         document.body.appendChild(modal);
         return { modal, card };
