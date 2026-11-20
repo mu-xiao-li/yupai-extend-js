@@ -9,7 +9,7 @@
 // @license      MIT
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
-// @run-at       document-end
+// @run-at       document-start
 // @downloadURL  https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_chat_plus.user.js
 // @updateURL    https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_chat_plus.user.js
 // ==/UserScript==
@@ -18,7 +18,10 @@
 // 2026-11-19 v1.0.7 移除快捷复读按钮 ↲（站点原生 .chat-repeat 已支持直接复读，脚本不再重复实现；
 //   收藏 ⭐ 保留，仍走 v3 取原文入记事本）；
 //   修复 token 过期后 401 不自愈：URL请求(v3) 原先完全无401处理（冷存过期→每次点击都401、需手动刷新页面），
-//   现收到401自动强刷 token 静默重试一次；Api.req 的401重试路径补日志；token 刷新失败报错带 HTTP 状态码
+//   现收到401静默换 token 重试一次；Api.req 的401重试路径补日志；token 刷新失败报错带 HTTP 状态码；
+//   token 改"页面共享授权优先"（作者确认页面授权共用、不需要重新申请）：fetch 钩子 document-start 立即安装，
+//   在应用首批请求前捕获页面 accessToken 直接复用；refresh 换取降为最后兜底（会轮换登录 Cookie、有踢下线风险——
+//   启动预热正是这样把 Vue 会话挤掉线的，预热已移除）；401 仅作废用过的旧 token，页面已换新则直接复用
 // 2026-11-18 v1.0.6 Safari 系脚本管理器兼容：GM_addStyle 缺失时降级为 createElement('style') 注入，
 //   GM_registerMenuCommand 缺失时静默跳过（功能均有浮块/界面入口，不丢功能）；
 //   移除双击头像艾特（站点原生已收编该功能，脚本不再重复实现）；
@@ -230,9 +233,12 @@
         _token: null,
         _refreshing: null,
 
-        // 获取 accessToken（优先直调 refresh 端点；失败时 fetch 钩子会捕获应用自身的 Bearer 兜底）
-        async token(force) {
-            if (this._token && !force) return this._token;
+        // token 获取优先级（作者确认"页面的授权是共用的，不需要重新申请"）：
+        //   1) 页面共享 token：fetch 钩子从应用自身请求的 Authorization 头捕获（零副作用，首选）
+        //   2) 兜底：POST /auth/refresh 换取——会轮换登录 Cookie，有把站点会话挤下线的风险
+        //      （启动预热就是这样把 Vue 会话踢掉的），严禁在启动/空闲时主动调用，只允许懒触发
+        async token() {
+            if (this._token) return this._token;
             if (this._refreshing) return this._refreshing;
             this._refreshing = (async () => {
                 const t0 = performance.now();
@@ -255,13 +261,22 @@
             return this._refreshing;
         },
 
-        // 通用 v3 请求：自动带 Bearer，401 自动刷新一次
+        // 401 处理策略：仅当缓存仍是"刚才用掉的那个旧 token"才作废；
+        // 若钩子已捕获页面新 token（应用自己刷新过、Cookie 轮换已由它完成）则直接复用，不触发 refresh；
+        // 确实没有新 token 才由 token() 落到 refresh 兜底——减少不必要的 Cookie 轮换
+        invalidateIfStale(usedToken) {
+            if (this._token === usedToken) this._token = null;
+        },
+
+        // 通用 v3 请求：自动带 Bearer，401 静默自愈一次（页面 token 优先，refresh 兜底）
         async req(path, opt = {}) {
-            const { __forceToken, ...fetchOpt } = opt;
+            const fetchOpt = opt;
             let tokenMs = 0, fetchMs = 0, retried = false;
+            let lastTok = null;
             const doFetch = async () => {
                 const t1 = performance.now();
-                const token = await this.token(!!__forceToken);
+                const token = await this.token();
+                lastTok = token;
                 tokenMs += performance.now() - t1;
                 const headers = Object.assign({ 'Content-Type': 'application/json' }, fetchOpt.headers || {}, {
                     'Authorization': `Bearer ${token}`
@@ -274,11 +289,11 @@
             const t0 = performance.now();
             let rsp = await doFetch();
             if (rsp.status === 401) {
-                this._token = null;
                 retried = true;
+                this.invalidateIfStale(lastTok);
                 rsp = await doFetch();
                 // 只在 401 时打印（平时零噪音），用于确认静默重试结果
-                console.log(`[fpcp] 401，已静默刷新token重试 → ${path} status=${rsp.status}`);
+                console.log(`[fpcp] 401，已静默换token重试 → ${path} status=${rsp.status}`);
             }
             // 耗时埋点：token 段（含刷新/401 重试）与 API 往返分开计，定位"点击后延迟"来源
             // console.log(`[fpcp] ${fetchOpt.method || 'GET'} ${path} 总${(performance.now() - t0).toFixed(0)}ms = token ${tokenMs.toFixed(0)}ms + fetch ${fetchMs.toFixed(0)}ms，status=${rsp.status}${retried ? '（401已重试）' : ''}`);
@@ -852,20 +867,20 @@
                     const body = methodHasBody(r.method) ? this.buildRequestBody(r) : null;
                     const opt = await this.buildFetchOpt(r.method, r.endpoint, body, bodyTypeContentType(r.bodyType), r.headers);
                     let rsp = await fetch(opt.url, opt.init);
-                    // 401=token 失效：静默强刷一次并重试（门控与 buildFetchOpt 同款：
-                    // 站内 + v3 才带 Bearer，才值得刷 token 重试——外部域名零凭证永不动；
+                    // 401=token 失效：静默换 token 重试一次（门控与 buildFetchOpt 同款：
+                    // 站内 + v3 才带 Bearer，才值得重试——外部域名零凭证永不动；
                     // 重试仍失败则保留响应用于下方报错，不会死循环）
                     const r401u = opt.url;
                     const r401same = /^https:\/\/(www\.)?fishpi\.cn(\/|$)/i.test(r401u) || r401u.startsWith(location.origin);
                     if (rsp.status === 401 && r401same && /\/api\/v3\//.test(r401u)) {
                         try {
-                            await Api.token(true);   // force：绕过缓存强制重新签发
+                            Api.invalidateIfStale(opt.tokenUsed);   // 仅作废旧token；页面已换新则直接复用
                             const opt2 = await this.buildFetchOpt(r.method, r.endpoint, body, bodyTypeContentType(r.bodyType), r.headers);
                             const rsp2 = await fetch(opt2.url, opt2.init);
-                            console.log(`[fpcp] URL请求401，已静默刷新token重试 → HTTP ${rsp2.status}`);
+                            console.log(`[fpcp] URL请求401，已静默换token重试 → HTTP ${rsp2.status}`);
                             rsp = rsp2;
                         } catch (e) {
-                            console.warn('[fpcp] URL请求401刷新重试失败:', e && e.message ? e.message : e);
+                            console.warn('[fpcp] URL请求401重试失败:', e && e.message ? e.message : e);
                         }
                     }
                     if (!rsp.ok) toast(`URL请求${tag}：HTTP ${rsp.status}`);
@@ -912,12 +927,13 @@
             const init = { method, credentials: 'include' };
             const isSameSite = /^https:\/\/(www\.)?fishpi\.cn(\/|$)/i.test(url) || url.startsWith(location.origin);
             const headers = {};
+            let tokenUsed = null;
             if (isSameSite) {
                 if (/\/api\/v3\//.test(url)) {
                     // ---- 新版 v3：Bearer token + 写操作幂等键 ----
                     try {
                         const token = await Api.token();
-                        if (token) headers['Authorization'] = `Bearer ${token}`;
+                        if (token) { headers['Authorization'] = `Bearer ${token}`; tokenUsed = token; }
                     } catch (e) {
                         console.warn('[fishpi_chat_plus] URL请求未取到 token，按无凭证发送:', e);
                     }
@@ -951,7 +967,7 @@
                 }
             }
             if (Object.keys(headers).length > 0) init.headers = headers;
-            return { url, init };
+            return { url, init, tokenUsed };
         },
 
         // 幂等键：settings 路径用 settings: 前缀（与站点浏览器端一致），其余用 req: 前缀
@@ -3111,9 +3127,8 @@
 
     // ================== 初始化 ==================
     function init() {
-        installFetchHook();
         injectStyles();
-        
+
         // 统一消息监听单例启动
         MessageWatcher.start();
         MessageActions.init();
@@ -3134,6 +3149,11 @@
             toast(nowDisabled ? '快捷浮窗已启用，刷新页面生效' : '快捷浮窗已关闭，刷新页面生效');
         });
     }
+
+    // fetch 钩子立即安装（@run-at document-start，必须早于应用首批请求）：
+    // 页面共享 token 全靠它从应用请求的 Authorization 头捕获——装晚了捕获不到，
+    // 就只能落到 refresh 兜底去轮换登录 Cookie（有踢下线风险）
+    installFetchHook();
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
