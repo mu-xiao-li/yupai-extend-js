@@ -2,7 +2,7 @@
 // @name         鱼排红包板块（新版）
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      2.0.0
+// @version      2.0.1
 // @description  新版聊天室红包板块：捕获/过滤/自动抢/提醒/浮窗，与聊天室增强共用消息监听（由 hongbao_module v1.4.4 重构）
 // @author       muli
 // @match        https://new.fishpi.cn/cr
@@ -14,6 +14,13 @@
 // @updateURL    https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_hongbao.user.js
 // ==/UserScript==
 // 旧版（fishpi.cn/cr 旧聊天室）演进史见 hongbao_module.user.js（v1.0.0 ~ v1.4.4），旧文件冻结不动
+// 2026-11-20 v2.0.1 UI 微调（消息云会话跨会话同步，仅样式层不动逻辑）：
+//   配置面板弹层化：毛玻璃遮罩+点遮罩关闭、scale 入场动画、圆角 20px 对齐消息云弹层；按钮加按压反馈；prefers-reduced-motion 降级
+// 2026-11-20 v2.0.1 二轮显示修复（UI 优化后回归问题）：
+//   状态更新闪烁根治：updateCard 改就地修补（patchCard，只动角标/chip/克隆，绝不替换节点——
+//   替换会重放进场动画引发闪烁）；卡片时间显示改 MM-DD HH:mm（悬浮看完整时间，便于找回红包）；
+//   新增 API 消息定位弹窗（仿 fishpi_message_listening_plus 上下文追溯）：原消息不在聊天区时
+//   调 GET /api/v3/chat/messages/{id}/context?radius=5 找回并展示前后文，附手动领取入口（猜拳自选出拳）
 // 2026-11-20 v2.0.0 卡片显示优化：红包克隆恢复完整原样式（去掉缩放与高度裁剪，金额显示/底边框回归）；
 //   状态/进度更新改单卡定点替换（updateCard），消除整列表重建闪烁；增删红包才走全量渲染
 // 2026-11-20 v2.0.0 修复启动即被踢下线（"预热"事故复发，同 quick_functions-重构2 踩坑11）：
@@ -45,7 +52,7 @@
     'use strict';
 
     // ================== 常量 ==================
-    const VERSION_US = 'v2.0.0';
+    const VERSION_US = 'v2.0.1';
     const DOWNLOAD_URL = 'https://github.com/mu-xiao-li/yupai-extend-js/blob/main/fishpi_hongbao.user.js';
     const API_BASE = 'https://fishpi.cn';
     // client 签名沿用聊天室增强（用户实测可用；发消息仍带 Idempotency-Key）
@@ -678,6 +685,11 @@
         const body = {};
         if (risky) body.riskAccepted = true;
         if (p.type === '石头剪刀布红包') body.gesture = getRandomInt(0, 2);
+        doClaim(p, body);
+    }
+
+    // 领取请求本体（自动抢/手动领取共用）
+    async function doClaim(p, body) {
         try {
             const rsp = await apiReq('/api/v3/chat/red-packets/' + p.id + '/claims', {
                 method: 'POST',
@@ -688,19 +700,32 @@
             if (j && j.code === 0 && j.data) {
                 updateCard(p.id);
                 sendThanks(p, j.data);
-            } else {
-                const msg = (j && (j.msg || j.message)) || ('HTTP ' + rsp.status);
-                if (rsp.status === 409) {
-                    // 领完/已领：只更新状态，不打扰
-                    p.status = 'empty';
-                    updateCard(p.id);
-                } else {
-                    muliShowToast('自动抢失败：' + msg, 3000, 'error');
-                }
+                return j.data;
             }
+            const msg = (j && (j.msg || j.message)) || ('HTTP ' + rsp.status);
+            if (rsp.status === 409) {
+                // 领完/已领：只更新状态，不打扰
+                p.status = 'empty';
+                updateCard(p.id);
+            } else {
+                muliShowToast('领取失败：' + msg, 3000, 'error');
+            }
+            return null;
         } catch (e) {
-            muliShowToast('自动抢异常：' + (e && e.message ? e.message : e), 3000, 'error');
+            muliShowToast('领取异常：' + (e && e.message ? e.message : e), 3000, 'error');
+            return null;
         }
+    }
+
+    // 手动领取（定位弹窗按钮）：按钮文案已标注风险，用户明确点击即同意，不再弹二次确认
+    function manualClaim(p, gesture) {
+        const body = {};
+        const risky = (p.type === '心跳红包' || p.type === '石头剪刀布红包');
+        if (risky) body.riskAccepted = true;
+        if (p.type === '石头剪刀布红包') body.gesture = gesture != null ? gesture : getRandomInt(0, 2);
+        doClaim(p, body).then((data) => {
+            if (data) muliShowToast('领取成功' + (data.amount != null ? '：' + data.amount + ' 积分' : ''), 2500, 'success');
+        });
     }
 
     // ================== 感谢语 + 小尾巴 ==================
@@ -844,8 +869,11 @@
                 box-shadow: 0 8px 24px rgba(0,0,0,0.18); z-index: 10002; min-width: 160px; padding: 8px 0; }
             .${NS}menu-item { padding: 8px 16px; font-size: 13px; cursor: pointer; transition: background 0.2s; color: var(--${NS}text); }
             .${NS}menu-item:hover { background: var(--${NS}subtle); }
-            .${NS}config { animation: ${NS}fadeIn 0.25s ease-out; font-family: inherit; }
-            @keyframes ${NS}fadeIn { from { opacity: 0; transform: translate(-50%, -48%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+            .${NS}config { animation: ${NS}popIn 0.18s ease-out; font-family: inherit; }
+            @keyframes ${NS}popIn { from { opacity: 0; transform: translate(-50%, -48%) scale(0.96); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+            .${NS}config-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
+                -webkit-backdrop-filter: blur(2px); z-index: 10001; animation: ${NS}fadeIn 0.16s ease-out; }
+            @keyframes ${NS}fadeIn { from { opacity: 0; } to { opacity: 1; } }
             .${NS}config .${NS}section { padding: 16px; background: var(--${NS}subtle); border-radius: 10px; border-left: 3px solid #ff6b6b; margin-bottom: 16px; }
             .${NS}config .${NS}item { margin-bottom: 12px; padding: 4px 6px; border-radius: 6px; transition: background 0.2s ease; }
             .${NS}config .${NS}item:hover { background: rgba(255,107,107,0.06); }
@@ -859,13 +887,29 @@
                 display: flex; gap: 12px; box-shadow: 0 -6px 18px rgba(0,0,0,0.08); z-index: 5; }
             .${NS}config .${NS}btn { flex: 1; padding: 11px 10px; border: none; border-radius: 10px; cursor: pointer;
                 font-weight: 600; font-size: 14px; transition: transform .15s, box-shadow .15s; }
-            .${NS}config .${NS}btn:hover { transform: translateY(-1px); }
+            .${NS}config .${NS}btn:hover { transform: translateY(-1px) scale(1.02); }
+            .${NS}config .${NS}btn:active { transform: scale(0.98); }
             .${NS}config .${NS}btn-primary { background: linear-gradient(135deg, #ff6b6b, #ff8e53); color: white;
                 box-shadow: 0 4px 14px rgba(255,107,107,0.35); }
             .${NS}config .${NS}btn-ghost { background: var(--${NS}subtle); color: var(--${NS}text2); }
             .${NS}dragging { opacity: 0.92; box-shadow: 0 15px 40px rgba(0,0,0,0.3) !important; }
             .${NS}mode { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.18);
                 color: white; border: 1px solid rgba(255,255,255,0.35); cursor: default; }
+            .${NS}locate { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 460px; max-width: 92vw;
+                max-height: 76vh; overflow-y: auto; background: var(--${NS}elevated); color: var(--${NS}text);
+                border: 1px solid var(--${NS}border); border-radius: 16px; padding: 18px; z-index: 10002;
+                box-shadow: 0 16px 48px rgba(0,0,0,0.28); animation: ${NS}popIn 0.18s ease-out; }
+            .${NS}locate-row { padding: 6px 10px; border-radius: 8px; font-size: 12px; color: var(--${NS}text2); line-height: 1.7; }
+            .${NS}locate-row b { color: var(--${NS}text); }
+            .${NS}locate-row.is-anchor { background: rgba(255,107,107,0.1); border: 1px solid rgba(255,107,107,0.35); }
+            .${NS}locate .${NS}btn { flex: none; padding: 8px 18px; border: none; border-radius: 10px; cursor: pointer;
+                font-weight: 600; font-size: 13px; transition: transform .15s; }
+            .${NS}locate .${NS}btn:hover { transform: translateY(-1px); }
+            .${NS}locate .${NS}btn-primary { background: linear-gradient(135deg, #ff6b6b, #ff8e53); color: white; }
+            .${NS}locate .${NS}btn-ghost { background: var(--${NS}subtle); color: var(--${NS}text2); }
+            @media (prefers-reduced-motion: reduce) {
+                .${NS}config, .${NS}config-backdrop, .${NS}card, .${NS}icon { animation: none !important; transition: none !important; }
+            }
         `;
         const style = document.createElement('style');
         style.id = NS + 'style';
@@ -971,7 +1015,7 @@
             const openBtn = article ? article.querySelector('button.hongbao__open') : null;
             if (e.target.closest('.hongbao__item')) {
                 if (openBtn) openBtn.click();
-                else muliShowToast('原消息已不在当前列表，请滚动加载后再试', 2500, 'warning');
+                else showLocateDialog(id);   // 原消息不在 → API 定位弹窗（含手动领取）
             } else {
                 highlightOriginal(id);
             }
@@ -1039,13 +1083,123 @@
     function highlightOriginal(id) {
         const article = document.getElementById('chatroom' + id);
         if (!article) {
-            muliShowToast('原消息已不在当前列表', 2000, 'warning');
+            showLocateDialog(id);   // 不在当前聊天区 → 走上下文 API 查找回
             return;
         }
         document.querySelectorAll('.' + NS + 'highlight').forEach(el => el.classList.remove(NS + 'highlight'));
         article.classList.add(NS + 'highlight');
         article.scrollIntoView({ behavior: 'smooth', block: 'center' });
         setTimeout(() => article.classList.remove(NS + 'highlight'), 3000);
+    }
+
+    // ================== API 消息定位（仿 fishpi_message_listening_plus 上下文追溯） ==================
+    // 原消息被历史窗口淘汰出 DOM 时，调官方上下文 API 找回并展示，附手动领取入口
+    function fmtShortTime(ts) {
+        const d = new Date(Number(ts) || 0);
+        const pad = (n) => String(n).padStart(2, '0');
+        return (pad(d.getMonth() + 1)) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function ctxRow(m) {
+        const a = m.author || {};
+        const name = a.userNickname || a.userName || '匿名';
+        let text = '';
+        const type = String(m.type || 'text');
+        if (type === 'text') {
+            text = String(m.content || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+        } else if (type === 'redPacket') text = '[红包卡片]';
+        else if (type === 'music') text = '[音乐分享]';
+        else if (type === 'weather') text = '[天气信息]';
+        else text = '[' + type + ']';
+        return { id: String(m.id || ''), name, time: fmtShortTime(m.createdAt), text };
+    }
+
+    async function showLocateDialog(id) {
+        const p = redPackets.get(id);
+        muliShowToast('原消息不在当前聊天区域，正在通过 API 查找…', 1600, 'info');
+        let list = [];
+        try {
+            const rsp = await apiReq('/api/v3/chat/messages/' + encodeURIComponent(id) + '/context?radius=5');
+            const j = await rsp.json().catch(() => null);
+            if (j && j.code === 0 && j.data && Array.isArray(j.data.list)) list = j.data.list;
+        } catch (e) { }
+        if (!list.length) {
+            muliShowToast('API 未找到该消息（可能已撤回）', 2500, 'warning');
+            return;
+        }
+        const old = document.querySelector('.' + NS + 'locate-backdrop');
+        if (old) old.remove();
+
+        const backdrop = document.createElement('div');
+        backdrop.className = NS + 'config-backdrop ' + NS + 'locate-backdrop';
+        const box = document.createElement('div');
+        box.className = NS + 'locate';
+
+        const head = document.createElement('div');
+        head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--hb2_border);';
+        head.innerHTML = '<b style="color:#ff6b6b;font-size:15px;">📍 消息定位（API）</b>';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '×';
+        closeBtn.style.cssText = 'background:none;border:none;font-size:22px;cursor:pointer;color:var(--hb2_text2);line-height:1;padding:0;';
+        head.appendChild(closeBtn);
+        box.appendChild(head);
+
+        // 红包摘要（来自板块缓存）
+        if (p) {
+            const summary = document.createElement('div');
+            summary.className = NS + 'locate-row is-anchor';
+            summary.textContent = '🧧 ' + (p.nickname || p.userName || '') + ' 的「' + p.type + '」' + (p.msg || '')
+                + (p.money ? '（¥ ' + p.money + '）' : '')
+                + ' · ' + (p.status === 'empty' ? STATUS_CHIP_TEXT.empty : STATUS_CHIP_TEXT.ok)
+                + (p.count ? ' · ' + (p.got != null ? p.got : 0) + '/' + p.count : '');
+            box.appendChild(summary);
+        }
+
+        // 上下文消息（前后各 5 条，锚点高亮）
+        const ctxWrap = document.createElement('div');
+        ctxWrap.style.cssText = 'max-height: 40vh; overflow-y: auto; margin: 10px 0;';
+        list.forEach((m) => {
+            const r = ctxRow(m);
+            const row = document.createElement('div');
+            row.className = NS + 'locate-row' + (r.id === String(id) ? ' is-anchor' : '');
+            row.innerHTML = '<span style="opacity:.7">' + r.time + '</span> <b></b> <span></span>';
+            row.querySelector('b').textContent = r.name;
+            row.querySelectorAll('span')[1].textContent = r.text;
+            ctxWrap.appendChild(row);
+        });
+        box.appendChild(ctxWrap);
+
+        // 底部操作
+        const foot = document.createElement('div');
+        foot.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;';
+        const mkBtn = (text, primary, fn) => {
+            const b = document.createElement('button');
+            b.className = NS + 'btn ' + (primary ? 'hb2_btn-primary' : 'hb2_btn-ghost');
+            b.style.cssText = 'flex:none;padding:8px 18px;';
+            b.textContent = text;
+            b.addEventListener('click', fn);
+            foot.appendChild(b);
+            return b;
+        };
+        // 手动领取入口（按钮文案已标注风险 = 用户明确点击同意；rps 出拳自选）
+        if (p && p.status !== 'empty') {
+            if (p.type === '石头剪刀布红包' && !p.userIsSelf) {
+                mkBtn('✊ 石头', true, () => { manualClaim(p, 0); close(); });
+                mkBtn('✌️ 剪刀', true, () => { manualClaim(p, 1); close(); });
+                mkBtn('🖐 布', true, () => { manualClaim(p, 2); close(); });
+            } else if (!(p.type === '石头剪刀布红包' && p.userIsSelf)) {
+                mkBtn(p.type === '心跳红包' ? '领取（可能扣积分）' : '领取', true, () => { manualClaim(p); close(); });
+            }
+        }
+        mkBtn('关闭', false, close);
+        box.appendChild(foot);
+
+        function close() { backdrop.remove(); }
+        closeBtn.addEventListener('click', close);
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+
+        backdrop.appendChild(box);
+        document.body.appendChild(backdrop);
     }
 
     function renderList() {
@@ -1069,8 +1223,10 @@
     }
 
     const STATUS_COLORS = { available: '#4CAF50', opened: '#2196F3', empty: '#FF9800', expired: '#9E9E9E', unknown: '#607D8B' };
+    const STATUS_CHIP_TEXT = { ok: '可抢', empty: '已抢光' };   // 状态文案微调只改这里（renderCard/patchCard 共用）
 
-    // 单卡片定点更新：状态/进度变化只替换这一张卡，避免整列表重建的闪烁；
+    // 单卡片定点更新：状态/进度变化就地修补这一张卡，绝不替换节点
+    // （替换节点会重放卡片进场动画、引发重排，就是"状态一更新列表就闪"的根源）；
     // 增删（新红包/删除）才走 renderList 全量。
     function updateCard(id) {
         if (!panelEl) return;
@@ -1085,8 +1241,53 @@
             else if (countBadge) countBadge.textContent = redPackets.size;
             return;
         }
-        if (old) old.replaceWith(renderCard(p));   // 不在显示窗口的不重建，零闪烁
+        if (old) patchCard(p, old);   // 就地修补，零闪烁
         if (countBadge) countBadge.textContent = redPackets.size;
+    }
+
+    // 就地修补卡片的可变部分（NEW 标记/状态角标/状态与进度 chip/红包克隆本体）
+    function patchCard(p, card) {
+        const badge = card.querySelector('.' + NS + 'badge');
+        if (p.isNew && !badge) {
+            const b = document.createElement('div');
+            b.className = NS + 'badge';
+            b.textContent = 'NEW';
+            card.appendChild(b);
+        } else if (!p.isNew && badge) {
+            badge.remove();
+        }
+        if (card.classList.contains('is-new') !== !!p.isNew) {
+            card.classList.toggle('is-new', !!p.isNew);
+        }
+        const statusEl = card.querySelector('.' + NS + 'status');
+        if (statusEl) statusEl.style.background = STATUS_COLORS[p.status] || '#607D8B';
+        const chips = card.querySelector('.' + NS + 'chips');
+        if (chips) {
+            const statusChip = chips.querySelector('.chip-ok, .chip-empty');
+            if (statusChip) {
+                statusChip.className = NS + 'chip ' + (p.status === 'empty' ? 'chip-empty' : 'chip-ok');
+                statusChip.textContent = p.status === 'empty' ? STATUS_CHIP_TEXT.empty : STATUS_CHIP_TEXT.ok;
+            }
+            let progressChip = chips.querySelector('[data-role="progress"]');
+            if (p.count != null && p.count > 0) {
+                if (!progressChip) {
+                    progressChip = document.createElement('span');
+                    progressChip.className = NS + 'chip';
+                    progressChip.setAttribute('data-role', 'progress');
+                    chips.appendChild(progressChip);
+                }
+                progressChip.textContent = (p.got != null ? p.got : 0) + '/' + p.count;
+            } else if (progressChip) {
+                progressChip.remove();
+            }
+        }
+        // 红包克隆本体（desc/样式随状态变）
+        const bubble = card.querySelector('.' + NS + 'bubble');
+        const live = liveItemEl(p.id);
+        if (bubble && live) {
+            bubble.innerHTML = '';
+            bubble.appendChild(live.cloneNode(true));
+        }
     }
 
     function renderCard(p) {
@@ -1116,7 +1317,9 @@
         name.textContent = p.nickname || p.userName || '匿名';
         const time = document.createElement('span');
         time.className = NS + 'time';
-        time.textContent = (p.time || '').split(' ')[0];
+        const tStr = String(p.time || '');
+        time.textContent = tStr.length >= 16 ? tStr.slice(5, 16) : tStr;   // MM-DD HH:mm，便于按时间找回红包
+        time.title = tStr;   // 悬浮看完整时间
         userRow.appendChild(avatar);
         userRow.appendChild(name);
         userRow.appendChild(time);
@@ -1131,11 +1334,12 @@
         chips.appendChild(typeChip);
         const statusChip = document.createElement('span');
         statusChip.className = NS + 'chip ' + (p.status === 'empty' ? 'chip-empty' : 'chip-ok');
-        statusChip.textContent = p.status === 'empty' ? '已抢光' : '可抢';
+        statusChip.textContent = p.status === 'empty' ? STATUS_CHIP_TEXT.empty : STATUS_CHIP_TEXT.ok;
         chips.appendChild(statusChip);
         if (p.count != null && p.count > 0) {
             const progressChip = document.createElement('span');
             progressChip.className = NS + 'chip';
+            progressChip.setAttribute('data-role', 'progress');
             progressChip.textContent = (p.got != null ? p.got : 0) + '/' + p.count;
             chips.appendChild(progressChip);
         }
@@ -1429,17 +1633,32 @@
 
     // ================== 配置面板（加宽 + 保存栏吸底） ==================
     let configPanelEl = null;
+    let configBackdropEl = null;
 
     function openConfig() {
         if (!configPanelEl) createConfigPanel();
         initializeConfigForm();
+        if (configBackdropEl) configBackdropEl.style.display = 'block';
         configPanelEl.style.display = 'block';
     }
 
+    // 统一关闭（×/保存/点遮罩三处共用）
+    function closeConfig() {
+        if (configPanelEl) configPanelEl.style.display = 'none';
+        if (configBackdropEl) configBackdropEl.style.display = 'none';
+    }
+
     function createConfigPanel() {
+        // 毛玻璃遮罩（点遮罩关闭，同消息云弹层）
+        configBackdropEl = document.createElement('div');
+        configBackdropEl.className = NS + 'config-backdrop';
+        configBackdropEl.style.display = 'none';
+        configBackdropEl.addEventListener('click', closeConfig);
+        document.body.appendChild(configBackdropEl);
+
         const p = document.createElement('div');
         p.className = NS + 'config';
-        p.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--hb2_elevated); color: var(--hb2_text); border: 1px solid var(--hb2_border); border-radius: 16px; padding: 20px; z-index: 10002; box-shadow: 0 16px 48px rgba(0,0,0,0.28); width: 640px; max-width: 94vw; max-height: 86vh; overflow-y: auto; display: none;';
+        p.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--hb2_elevated); color: var(--hb2_text); border: 1px solid var(--hb2_border); border-radius: 20px; padding: 20px; z-index: 10002; box-shadow: 0 16px 48px rgba(0,0,0,0.28); width: 640px; max-width: 94vw; max-height: 86vh; overflow-y: auto; display: none;';
 
         const typeChecks = (cls) => ['拼手气红包', '普通红包', '专属红包', '心跳红包', '石头剪刀布红包'].map(t =>
             `<label style="display:flex;align-items:center;font-size:12px;gap:4px;"><input type="checkbox" class="${cls}" value="${t}">${t}</label>`
@@ -1532,7 +1751,7 @@
         document.body.appendChild(p);
         configPanelEl = p;
 
-        p.querySelector('#' + NS + 'closeConfig').addEventListener('click', () => { p.style.display = 'none'; });
+        p.querySelector('#' + NS + 'closeConfig').addEventListener('click', closeConfig);
         p.querySelector('#' + NS + 'applyConfig').addEventListener('click', applyConfig);
         p.querySelector('#' + NS + 'resetConfig').addEventListener('click', resetConfig);
 
@@ -1619,7 +1838,7 @@
         applyFilter();
         renderList();
         muliShowToast('配置已保存并应用');
-        configPanelEl.style.display = 'none';
+        closeConfig();
     }
 
     // 恢复默认：沿用旧版行为（只重置显示/功能/过滤/外观，自动抢与文案保留）
