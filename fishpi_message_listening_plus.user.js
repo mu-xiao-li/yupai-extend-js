@@ -19,7 +19,7 @@
 //   真因：老版聊天室增强的 rAF 合批在后台冻结消息广播、5s 心跳却照发，hub 15s 静默回退被心跳掩盖，
 //   总线模式后台无通知（单独监听走本脚本 setTimeout 管道不受影响）；保险后总线模式不依赖聊天室增强版本
 //   即可离页推送；配置页标注两模式通知能力（单独=完全自主，总线=共用+后台保险兜底）
-//   消息体气泡底色 rgba(128,128,140,0.08)→0.16，与白色弹层底不再混淆
+//   消息体气泡底色 rgba(128,128,140,0.08)→0.1，与白色弹层底不再混淆
 // 2026-11-24 v2.0.2 基于 v2.0.0 重建（v2.0.1 的样式复刻/积压汇总等取舍已回退，仅保留「引用/跳转后自动关弹层」）：
 //   通知根因修复：消息处理原走 requestAnimationFrame 合批，页面隐藏（切走标签页/最小化）时 rAF 完全冻结，
 //   消息只积压不处理、浏览器通知必须停留在页面才弹（旧版 setTimeout 管道无此问题）——
@@ -1095,8 +1095,8 @@
 .${NS}msg-main { flex: 1; min-width: 0; }
 .${NS}msg-meta { font-size: 12px; color: var(--${NS}text2); margin-bottom: 4px; }
 .${NS}bubble {
-  /* 底色较 --fp-surface-subtle 加深一档（0.08→0.16），与白色弹层底不再混淆 */
-  background: rgba(128, 128, 140, 0.16); border-radius: 10px; padding: 8px 12px;
+  /* 底色较 --fp-surface-subtle 加深一档（0.08→0.1），与白色弹层底不再混淆 */
+  background: rgba(128, 128, 140, 0.1); border-radius: 10px; padding: 8px 12px;
   font-size: 14px; line-height: 1.6; overflow-wrap: anywhere;
 }
 .${NS}bubble img { max-width: 200px; border-radius: 8px; vertical-align: middle; }
