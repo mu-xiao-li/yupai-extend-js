@@ -2,7 +2,7 @@
 // @name         鱼排消息云·关键词监听（新版）
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      2.0.1
+// @version      2.0.3
 // @description  新版聊天室关键词/指定用户/@我监听：消息云提醒、聚合记录、上下文追溯（由 message_listening v1.1.0 重构）
 // @author       muli 定制
 // @match        https://new.fishpi.cn/cr
@@ -14,9 +14,25 @@
 // @updateURL    https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_message_listening_plus.user.js
 // ==/UserScript==
 // 旧版（fishpi.cn/cr 旧聊天室）演进史见 message_listening.user.js（v1.0.0 ~ v1.1.0），旧文件冻结不动
-// 2026-11-20 v2.0.1 首轮真机反馈：详情/上下文气泡复刻系统消息观感（--fp-hover 底+描边+非对称圆角+底部内阴影，
-//   自己消息 --fp-self 绿底靠右、头像改系统圆角方框、meta 改「昵称 · 时间」）；
-//   引用/跳转原消息后自动关闭弹层（让位给输入框/聊天区）；文件更名为 fishpi_message_listening_plus.user.js
+// 2026-11-24 v2.0.3 真机反馈第 1 轮：总线模式后台通知兜底 + 消息体底色加重
+//   hub 后台保险：总线模式页面隐藏时自动开启独立采集（id 去重与总线互补），回到可见页面交还总线——
+//   真因：老版聊天室增强的 rAF 合批在后台冻结消息广播、5s 心跳却照发，hub 15s 静默回退被心跳掩盖，
+//   总线模式后台无通知（单独监听走本脚本 setTimeout 管道不受影响）；保险后总线模式不依赖聊天室增强版本
+//   即可离页推送；配置页标注两模式通知能力（单独=完全自主，总线=共用+后台保险兜底）
+//   消息体气泡底色 rgba(128,128,140,0.08)→0.16，与白色弹层底不再混淆
+// 2026-11-24 v2.0.2 基于 v2.0.0 重建（v2.0.1 的样式复刻/积压汇总等取舍已回退，仅保留「引用/跳转后自动关弹层」）：
+//   通知根因修复：消息处理原走 requestAnimationFrame 合批，页面隐藏（切走标签页/最小化）时 rAF 完全冻结，
+//   消息只积压不处理、浏览器通知必须停留在页面才弹（旧版 setTimeout 管道无此问题）——
+//   现改 setTimeout(30ms) 合批，处理+通知不再依赖页面可见；恢复旧版 initNotification 权限预取，
+//   GM_notification 缺失时回退 web Notification
+//   气泡皮肤污染修复：不再采集 .fp-bubble 整段 innerHTML（混入 managed-bubble-shape 形状 SVG、
+//   sakura 装饰、皮肤贴图、fp-chat-tail 小尾巴、悬浮按钮，均带 data-v-* 作用域属性被站点样式全局命中，
+//   悬浮渲染出气泡、跑出 mlp_modal 蒙版）——改取内容节点 .vditor-reset 并统一 sanitize
+//   （剥 data-v-*/style/事件属性/class 仅留 img.emoji）；text 同步改内容节点文本（关键词匹配/通知不再带小尾巴）；
+//   总线(hub)来源同一管道治理；卡片消息先判型后提取（红包/音乐/天气原样保留）；存量快照渲染前自愈
+//   新增 listenMode 配置：总线监听（与聊天室增强共用，15s 静默回退）/ 单独监听，默认总线
+// 2026-11-20 v2.0.1 首轮真机反馈迭代（已回退，见 v2.0.2）：详情气泡复刻系统观感、积压汇总通知、
+//   弹层改小窗等取舍——气泡皮肤污染问题即由此暴露；文件更名 fishpi_message_listening_plus.user.js
 // 2026-11-20 v2.0.0 重构适配新版聊天室（new.fishpi.cn/cr）：
 //   消息捕获改走 fpcp 跨脚本消息总线（与聊天室增强共用监听，单装自动降级自开监听，15s 静默回退，id 去重）
 //   上下文追溯改官方 API（GET /api/v3/chat/messages/{id}/context?radius=5），不再依赖 DOM 存活，
@@ -32,7 +48,7 @@
     'use strict';
 
     // ================== 常量 ==================
-    const VERSION_US = 'v2.0.1';
+    const VERSION_US = 'v2.0.3';
     const API_BASE = 'https://fishpi.cn';
     const NS = 'mlp_';                  // 样式/节点命名空间
     const HUB_MSG_EVENT = 'fpcp:chat-msg';
@@ -82,10 +98,16 @@
         return (m ? m[1] : s).trim();
     }
 
-    // 卡片消息识别（红包/音乐/天气卡片不参与关键词匹配，避免「红包」被红包卡片刷屏）
-    function isCardHtml(html) {
+    // 卡片消息判型（红包/音乐/天气卡片不参与关键词匹配，避免「红包」被红包卡片刷屏），非卡片返回 ''
+    function cardTypeOf(html) {
         const h = String(html == null ? '' : html);
-        return h.includes('hongbao__') || h.includes('card music') || h.includes('card weather');
+        if (h.includes('hongbao__')) return 'redPacket';
+        if (h.includes('card music')) return 'music';
+        if (h.includes('card weather')) return 'weather';
+        return '';
+    }
+    function isCardHtml(html) {
+        return cardTypeOf(html) !== '';
     }
 
     // 匹配规则（优先级：指定用户 → @我 → 关键词），返回 {type,key} 或 null
@@ -144,6 +166,56 @@
         const s = document.createElement('style');
         s.textContent = css;
         document.head.appendChild(s);
+    }
+
+    // ================== 采集去污染（气泡皮肤隔离） ==================
+    // 新版 .fp-bubble 内层除正文（div.vditor-reset）外还混着皮肤系统产物：managed-bubble-shape 形状 SVG、
+    // sakura 装饰、managed-bubble-mark 皮肤贴图、fp-chat-tail 小尾巴、悬浮 actions/rx 按钮——
+    // 且都带 data-v-* 作用域属性，站点样式按属性选择器全局命中，整段搬进弹层会被皮肤污染
+    // （悬浮渲染出气泡、跑出 mlp_modal 蒙版）。只取正文节点再洗属性，卡片消息除外。
+    const SKIN_DROP_SELECTOR = '.managed-bubble-shape, .managed-bubble-mark, .sakura-canvas, .sakura-flight, .fp-chat-tail, .chat-author, .actions, .rx, time';
+
+    // 洗消息 HTML：剥 data-v-*（作用域样式入口）/style/id/事件属性；class 默认全剥（仅留 img.emoji）
+    function sanitizeMsgHtml(html, keepClasses) {
+        const s = String(html == null ? '' : html);
+        if (!s) return '';
+        const tpl = document.createElement('template');
+        tpl.innerHTML = s;
+        tpl.content.querySelectorAll('script').forEach(el => el.remove());
+        tpl.content.querySelectorAll('*').forEach(el => {
+            for (const attr of Array.from(el.attributes)) {
+                const n = attr.name.toLowerCase();
+                if (n === 'class') {
+                    if (keepClasses) continue;
+                    if (el.tagName === 'IMG' && /\bemoji\b/.test(attr.value)) el.setAttribute('class', 'emoji');
+                    else el.removeAttribute(attr.name);
+                } else if (n.startsWith('on') || n.startsWith('data-v-') || n === 'style' || n === 'id') {
+                    el.removeAttribute(attr.name);
+                }
+            }
+        });
+        return tpl.innerHTML;
+    }
+
+    // 气泡内层（DOM 节点或 HTML 串）→ 干净 {html,text,type}：
+    //   text 类只取 .vditor-reset 正文再 sanitize（小尾巴/皮肤/悬浮按钮不进快照）；卡片原样保留
+    function cleanBubble(src) {
+        const raw = (src && src.nodeType === 1) ? src.innerHTML : String(src == null ? '' : src);
+        const type = cardTypeOf(raw) || 'text';
+        if (!raw) return { html: '', text: '', type };
+        const tpl = document.createElement('template');
+        tpl.innerHTML = raw;
+        if (type !== 'text') {
+            // 卡片自带样式类是内容不是皮肤（isCardHtml 也按它判型），整段保留
+            return { html: raw, text: (tpl.content.textContent || '').replace(/\s+/g, ' ').trim(), type };
+        }
+        tpl.content.querySelectorAll(SKIN_DROP_SELECTOR).forEach(el => el.remove());
+        const body = tpl.content.querySelector('.vditor-reset') || tpl.content.querySelector('.body');
+        return {
+            html: sanitizeMsgHtml(body ? body.innerHTML : tpl.innerHTML),
+            text: ((body || tpl.content).textContent || '').replace(/\s+/g, ' ').trim(),
+            type
+        };
     }
 
     // ================== 轻提示 ==================
@@ -305,7 +377,9 @@
         enableAutoClean: true,               // 数据自动清理（默认勾选）
         autoCleanDays: 7,                    // 保留天数
         historyBackfill: 50,                 // 启动补录条数（0=关闭）
-        myUserName: ''                       // 自己的用户名（@我匹配用，留空自动识别）
+        myUserName: '',                      // 自己的用户名（@我匹配用，留空自动识别）
+        // ==== v2.0.2 新增 ====
+        listenMode: 'hub'                    // 消息捕获方式：'hub'=总线监听（与聊天室增强共用，静默回退）'self'=单独监听
     };
     const CONFIG = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 
@@ -322,6 +396,7 @@
                     else CONFIG[k] = String(cfg[k]);
                 }
                 // 旧配置里的 danmaku* 等键不迁移、不再写回
+                if (CONFIG.listenMode !== 'hub' && CONFIG.listenMode !== 'self') CONFIG.listenMode = DEFAULT_CONFIG.listenMode;
             } catch (e) { console.error('[消息云] 加载配置失败', e); }
         }
     }
@@ -510,25 +585,54 @@
 
     // ================== 浏览器通知（点击展开面板+对应组详情） ==================
     function notifyGroup(group, snap) {
-        if (typeof GM_notification === 'undefined') return;
         try {
             const title = group.type === 'user' ? `👤 关注人: ${group.key}`
                 : group.type === 'at' ? `📣 有人 @我`
                     : `🔑 关键词: ${group.key}`;
             const body = `${snap.nickname || snap.userName}: ${String(snap.text || '').slice(0, 80)}`;
-            GM_notification({
-                title, text: body, timeout: 5000,
-                onclick: () => {
-                    try { window.focus(); } catch (e) { }
-                    openPanel();
-                    const g = groups.find(x => x.id === group.id);
-                    if (g) showGroupDetail(g);
-                }
+            showNotification(title, body, () => {
+                openPanel();
+                const g = groups.find(x => x.id === group.id);
+                if (g) showGroupDetail(g);
             });
         } catch (e) { }
     }
 
-    // ================== 消息监听（hub 总线优先 + 自开兜底） ==================
+    // 统一通知出口：GM_notification 优先（可带点击回调），缺失时回退 web Notification（同旧版兜底）
+    function showNotification(title, body, onclick) {
+        const click = () => {
+            try { window.focus(); } catch (e) { }
+            if (onclick) onclick();
+        };
+        if (typeof GM_notification !== 'undefined') {
+            GM_notification({ title, text: body, timeout: 5000, onclick: click });
+            return;
+        }
+        if (typeof Notification === 'undefined') return;
+        const fire = () => {
+            try {
+                const n = new Notification(title, { body, tag: 'mlp-' + title });
+                n.onclick = () => { click(); try { n.close(); } catch (e) { } };
+            } catch (e) { }
+        };
+        if (Notification.permission === 'granted') fire();
+        else if (Notification.permission !== 'denied' && Notification.requestPermission) {
+            const p = Notification.requestPermission();
+            if (p && p.then) p.then(perm => { if (perm === 'granted') fire(); });
+        }
+    }
+
+    // 初始化通知权限（同旧版 initNotification：GM_notification 直接可用；web Notification 预申请）
+    function initNotification() {
+        if (typeof GM_notification !== 'undefined') return;
+        try {
+            if (typeof Notification !== 'undefined' && Notification.permission !== 'granted' && Notification.requestPermission) {
+                Notification.requestPermission();
+            }
+        } catch (e) { }
+    }
+
+    // ================== 消息监听（listenMode 可配：总线/独立；处理不依赖页面可见） ==================
     const Watcher = (() => {
         let mode = 'self';              // 'self' | 'hub'
         let observer = null;
@@ -554,14 +658,16 @@
             const img = article.querySelector('img.fp-avatar');
             const t = article.querySelector('.foot time');
             const bubble = article.querySelector('.fp-bubble');
+            const c = cleanBubble(bubble);   // 只取正文+洗属性，气泡皮肤不进快照
             return {
                 id, userName,
                 nickname: nameEl ? nameEl.textContent.trim() : '',
                 isSelf: article.classList.contains('is-self'),
                 time: t ? t.textContent.trim() : '',
                 avatar: img ? img.src : '',
-                html: bubble ? bubble.innerHTML : '',
-                text: bubble ? bubble.textContent : '',
+                html: c.html,
+                text: c.text,
+                type: c.type,
                 ts: Date.now()
             };
         }
@@ -596,7 +702,9 @@
             pending.add(node);
             if (!scheduled) {
                 scheduled = true;
-                requestAnimationFrame(flush);
+                // setTimeout 合批而非 rAF：rAF 在页面隐藏（切走标签页/最小化）时完全冻结，
+                // 消息只积压不处理、浏览器通知必须停留在页面才弹（v2.0.0 根因 bug；旧版是 setTimeout 管道）
+                setTimeout(flush, 30);
             }
         }
         function startSelf() {
@@ -614,19 +722,43 @@
             if (observer) { observer.disconnect(); observer = null; }
         }
 
-        // hub 事件（detail 为纯 JSON 字段，跨沙箱安全）
+        // hub 模式后台保险：页面隐藏时自开一份独立采集（id 去重与总线互补，不重复建组）。
+        // 老版聊天室增强的 rAF 合批在后台冻结消息广播、5s 心跳却照发，hub 静默回退被心跳掩盖——
+        // 保险让总线模式无论聊天室增强新旧都能离页推送浏览器通知，回到可见页面交还总线
+        function syncSelfByVisibility() {
+            if (mode !== 'hub') return;             // 独立模式 observer 本就常开
+            if (document.visibilityState === 'hidden') startSelf();
+            else stopSelf();
+        }
+        document.addEventListener('visibilitychange', syncSelfByVisibility);
+
+        // hub 事件（detail 为纯 JSON 字段，跨沙箱安全）；仅 listenMode='hub' 时响应
         window.addEventListener(HUB_HELLO_EVENT, () => {
+            if (CONFIG.listenMode !== 'hub') return;
             lastHubTs = Date.now();
-            if (mode !== 'hub') { mode = 'hub'; stopSelf(); updateModeBadge(); }
+            if (mode !== 'hub') { mode = 'hub'; syncSelfByVisibility(); updateModeBadge(); }
         });
-        window.addEventListener(HUB_BEAT_EVENT, () => { lastHubTs = Date.now(); });
-        window.addEventListener(HUB_MSG_EVENT, (e) => {
+        window.addEventListener(HUB_BEAT_EVENT, () => {
+            if (CONFIG.listenMode !== 'hub') return;
             lastHubTs = Date.now();
-            if (mode !== 'hub') { mode = 'hub'; stopSelf(); updateModeBadge(); }
+        });
+        window.addEventListener(HUB_MSG_EVENT, (e) => {
+            if (CONFIG.listenMode !== 'hub') return;
+            lastHubTs = Date.now();
+            if (mode !== 'hub') { mode = 'hub'; syncSelfByVisibility(); updateModeBadge(); }
             try {
                 const msgs = (e && e.detail) || [];
                 if (Array.isArray(msgs) && msgs.length) {
-                    handleMsgBatch(msgs.map(m => Object.assign({}, m, { ts: m.ts || Date.now() })));
+                    // hub 的 html 是 .fp-bubble 整段 innerHTML 串，同样走清洗管道去皮肤（两源同治）
+                    handleMsgBatch(msgs.map(m => {
+                        const c = cleanBubble(m.html);
+                        return Object.assign({}, m, {
+                            html: c.html,
+                            text: c.text,
+                            type: c.type,
+                            ts: m.ts || Date.now()
+                        });
+                    }));
                 }
             } catch (err) { console.warn('[消息云] hub 消息处理异常:', err); }
         });
@@ -643,6 +775,15 @@
         return {
             boot() { startSelf(); },    // 默认自开：单装即用，不等任何 hub
             currentMode() { return mode; },
+            // 配置变更后应用监听模式：self=永远独立；hub=自开待命、总线来了切总线（15s 静默回退不变）
+            applyListenMode() {
+                if (CONFIG.listenMode === 'self') {
+                    if (mode !== 'self') { mode = 'self'; updateModeBadge(); }
+                    startSelf();
+                } else if (mode !== 'hub') {
+                    startSelf();   // 自开待命，hub 事件到达时自动切总线（已在线则不动，避免双份采集）
+                }
+            },
             // 初始补扫现存 DOM（静默：不弹通知、不闪图标，修复旧版初始扫描误弹通知）
             scanNow(silent) {
                 const arts = document.querySelectorAll('article.fp-msg');
@@ -705,7 +846,7 @@
         if (!raw || !raw.id) return null;
         const a = raw.author || {};
         const isText = raw.type === 'text';
-        const html = isText ? String(raw.contentHtml || '') : '';
+        const html = isText ? sanitizeMsgHtml(String(raw.contentHtml || '')) : '';
         let text = '';
         if (isText) {
             text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || String(raw.content || '');
@@ -921,7 +1062,7 @@
 
 /* ---------- 三层弹层（详情/上下文/配置共用底） ---------- */
 .${NS}modal {
-  position: fixed; top: 10%; left: 27%; width: 46%;
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   background: rgba(0, 0, 0, 0.6); z-index: 20000;
   display: flex; align-items: center; justify-content: center;
   animation: ${NS}fade .16s ease-out;
@@ -933,58 +1074,34 @@
   max-height: 82vh; border-radius: 20px; overflow: auto; padding: 20px;
   animation: ${NS}pop .18s ease-out; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
 }
-.${NS}box { position: relative; max-width: 92vw; }
-.${NS}close-x {
-  position: absolute; top: 10px; right: 12px; z-index: 6;
-  width: 30px; height: 30px; border: none; border-radius: 50%;
-  background: var(--${NS}subtle); color: var(--${NS}text2); font-size: 16px;
-  cursor: pointer; transition: background .15s ease, color .15s ease, transform .15s ease;
-}
-.${NS}close-x:hover { background: rgba(255, 71, 87, 0.15); color: #ff4757; transform: scale(1.08); }
-.${NS}modal h3 { margin-top: 0; display: flex; align-items: center; gap: 8px; padding-right: 36px; }
+.${NS}modal h3 { margin-top: 0; display: flex; align-items: center; gap: 8px; }
 
-/* ---------- 消息气泡（复刻系统消息观感：--fp-hover 底/描边/非对称圆角/底部内阴影，自消息 --fp-self 绿底） ---------- */
+/* ---------- 消息气泡（脚本自渲染） ---------- */
 .${NS}msg-row {
-  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
-  border-radius: 12px; margin-bottom: 8px;
+  display: flex; gap: 10px; padding: 10px; border-radius: 12px; margin-bottom: 8px;
   transition: background .15s ease, transform .15s ease;
   animation: ${NS}itemIn .28s ease-out backwards;
   animation-delay: calc(var(--i, 0) * 20ms);
 }
 .${NS}msg-row:hover { background: var(--${NS}subtle); transform: translateY(-1px); }
-.${NS}msg-row.${NS}self { flex-direction: row-reverse; }
 @keyframes ${NS}itemIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
-/* 头像框（系统 fp-avatar-frame 观感：圆角方框） */
-.${NS}avatar-frame {
-  flex: none; padding: 2px; border-radius: 11px;
-  border: 1px solid var(--${NS}border); background: var(--${NS}subtle);
-}
 .${NS}msg-avatar {
-  display: block; width: 34px; height: 34px; border-radius: 8px; object-fit: cover;
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; object-fit: cover;
   background: var(--${NS}subtle);
 }
 .${NS}msg-main { flex: 1; min-width: 0; }
-.${NS}msg-row.${NS}self .${NS}msg-main { display: flex; flex-direction: column; align-items: flex-end; }
-.${NS}msg-meta { font-size: 12px; color: var(--fp-muted, var(--${NS}text2)); margin-bottom: 4px; }
-/* 系统气泡：--fp-hover 底 + 描边 + 非对称圆角（发送侧 5px）+ 底部内阴影 */
+.${NS}msg-meta { font-size: 12px; color: var(--${NS}text2); margin-bottom: 4px; }
 .${NS}bubble {
-  max-width: 100%; background: var(--fp-hover, rgba(128, 128, 140, 0.10));
-  border: 1px solid color-mix(in srgb, var(--fp-muted, #868e96) 35%, transparent);
-  border-radius: 5px 14px 14px; padding: 8px 12px;
-  font-size: 13px; line-height: 1.7; overflow-wrap: anywhere;
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--fp-muted, #868e96) 20%, transparent);
-}
-.${NS}msg-row.${NS}self .${NS}bubble {
-  background: var(--fp-self, #2f5d55);
-  border-radius: 14px 5px 14px 14px;
+  /* 底色较 --fp-surface-subtle 加深一档（0.08→0.16），与白色弹层底不再混淆 */
+  background: rgba(128, 128, 140, 0.16); border-radius: 10px; padding: 8px 12px;
+  font-size: 14px; line-height: 1.6; overflow-wrap: anywhere;
 }
 .${NS}bubble img { max-width: 200px; border-radius: 8px; vertical-align: middle; }
 .${NS}bubble .${NS}card-msg { color: var(--${NS}text2); font-style: italic; }
 .${NS}msg-actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
-.${NS}msg-row.${NS}self .${NS}msg-actions { justify-content: flex-end; }
 
 /* 上下文锚点高亮 */
 .${NS}msg-row.${NS}anchor {
@@ -1020,11 +1137,12 @@
 
 /* ---------- 配置表单 ---------- */
 .${NS}form label { display: block; margin: 10px 0 4px; font-size: 13px; color: var(--${NS}text2); }
-.${NS}form input[type=text], .${NS}form input[type=number], .${NS}form textarea {
+.${NS}form input[type=text], .${NS}form input[type=number], .${NS}form textarea, .${NS}form select {
   width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--${NS}border);
   border-radius: 8px; background: var(--${NS}card); color: var(--${NS}text); font-size: 13px;
 }
 .${NS}form .${NS}check-line { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-size: 13px; }
+.${NS}form .${NS}hint { margin: 4px 0 0; font-size: 12px; line-height: 1.7; color: var(--${NS}text2); }
 .${NS}form .${NS}inline { display: flex; align-items: center; gap: 8px; }
 .${NS}form .${NS}inline input[type=number] { width: 70px; }
 .${NS}form-foot { margin-top: 20px; text-align: right; display: flex; gap: 10px; justify-content: flex-end; }
@@ -1110,7 +1228,8 @@
         if (!el) return;
         const mode = Watcher.currentMode();
         el.textContent = mode === 'hub' ? '总线共用' : '独立监听';
-        el.title = mode === 'hub' ? '与聊天室增强共用消息监听' : '未检测到消息总线，独立监听中';
+        el.title = mode === 'hub' ? '与聊天室增强共用消息监听'
+            : (CONFIG.listenMode === 'hub' ? '未检测到消息总线，独立监听中' : '按配置独立监听');
     }
 
     // ================== UI：主面板 ==================
@@ -1302,39 +1421,27 @@
         const modal = document.createElement('div');
         modal.className = NS + 'modal';
         if (zIndex) modal.style.zIndex = zIndex;
-        // box 包住 card：关闭叉挂在 box 上，不受 card.innerHTML 整体重写影响
-        const box = document.createElement('div');
-        box.className = NS + 'box';
         const card = document.createElement('div');
         card.className = NS + 'card-box';
-        const closeBtn = document.createElement('button');
-        closeBtn.className = NS + 'close-x';
-        closeBtn.textContent = '✕';
-        closeBtn.title = '关闭';
-        closeBtn.addEventListener('click', () => modal.remove());
-        box.appendChild(card);
-        box.appendChild(closeBtn);
-        modal.appendChild(box);
+        modal.appendChild(card);
         modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
         document.body.appendChild(modal);
         return { modal, card };
     }
 
     // 消息行渲染（详情/上下文共用）；opts: {index, anchor, onJump, onQuote, onContext}
-    // 自己的消息靠右 + --fp-self 绿底气泡（复刻聊天室 is-self 观感）
     function renderMsgRow(msg, opts) {
         opts = opts || {};
         const row = document.createElement('div');
-        const isSelf = !!msg.isSelf || !!(myInfo.userName && msg.userName === myInfo.userName);
-        row.className = NS + 'msg-row'
-            + (isSelf ? ' ' + NS + 'self' : '')
-            + (opts.anchor ? ' ' + NS + 'anchor' : '');
+        row.className = NS + 'msg-row' + (opts.anchor ? ' ' + NS + 'anchor' : '');
         row.style.setProperty('--i', String(opts.index || 0));
-        const avatar = `<div class="${NS}avatar-frame">` + (msg.avatar
+        const avatar = msg.avatar
             ? `<img class="${NS}msg-avatar" src="${escapeHtml(msg.avatar)}" alt="">`
-            : `<div class="${NS}msg-avatar"></div>`) + `</div>`;
-        const body = msg.html
-            ? `<div class="${NS}bubble">${msg.html}</div>`
+            : `<div class="${NS}msg-avatar"></div>`;
+        // 渲染前再洗一道：存量快照（旧版存的含皮肤 HTML）自愈，双重清洗幂等；卡片保留样式类
+        const safeHtml = sanitizeMsgHtml(msg.html, isCardHtml(msg.html));
+        const body = safeHtml
+            ? `<div class="${NS}bubble">${safeHtml}</div>`
             : `<div class="${NS}bubble"><span class="${NS}card-msg">${escapeHtml(msg.text || '（无文本内容）')}</span></div>`;
         const actions = [];
         if (opts.onContext) actions.push(`<button class="${NS}btn ${NS}ctx">📖 查看上下文</button>`);
@@ -1343,7 +1450,7 @@
         row.innerHTML = `
             ${avatar}
             <div class="${NS}msg-main">
-                <div class="${NS}msg-meta">${escapeHtml(msg.nickname || msg.userName || '匿名')} · ${escapeHtml(msg.time || '')}</div>
+                <div class="${NS}msg-meta">${escapeHtml(msg.time || '')} ${escapeHtml(msg.nickname || msg.userName || '匿名')}</div>
                 ${body}
                 ${actions.length ? `<div class="${NS}msg-actions">${actions.join('')}</div>` : ''}
             </div>`;
@@ -1480,6 +1587,12 @@
                 <input type="text" id="${NS}cfg-users" value="${escapeHtml(CONFIG.users.join(','))}">
                 <label>我的用户名（@我监听用，留空自动识别）</label>
                 <input type="text" id="${NS}cfg-myname" value="${escapeHtml(CONFIG.myUserName)}" placeholder="留空自动识别">
+                <label>消息捕获方式（总线=与聊天室增强共用监听；单独=本脚本独立监听）</label>
+                <select id="${NS}cfg-listen-mode">
+                    <option value="hub" ${CONFIG.listenMode === 'hub' ? 'selected' : ''}>总线监听（未检测到总线自动回退独立）</option>
+                    <option value="self" ${CONFIG.listenMode === 'self' ? 'selected' : ''}>单独监听</option>
+                </select>
+                <div class="${NS}hint">💡 两种模式都支持离开页面后静默推送浏览器通知：单独监听完全自主可靠；总线监听与聊天室增强共用监听，页面隐藏时自动开启后台保险采集兜底（不依赖聊天室增强版本）</div>
                 <div class="${NS}check-line"><input type="checkbox" id="${NS}cfg-monitor" ${CONFIG.enableMonitor ? 'checked' : ''}><label for="${NS}cfg-monitor" style="margin:0;">启用监听</label></div>
                 <div class="${NS}check-line"><input type="checkbox" id="${NS}cfg-notify" ${CONFIG.enableNotification ? 'checked' : ''}><label for="${NS}cfg-notify" style="margin:0;">浏览器通知（新建组时提醒一次）</label></div>
                 <div class="${NS}check-line"><input type="checkbox" id="${NS}cfg-at" ${CONFIG.enableAtMonitor ? 'checked' : ''}><label for="${NS}cfg-at" style="margin:0;">@我 监听</label></div>
@@ -1501,6 +1614,7 @@
             CONFIG.users = normalizeList(card.querySelector('#' + NS + 'cfg-users').value);
             CONFIG.myUserName = card.querySelector('#' + NS + 'cfg-myname').value.trim();
             if (CONFIG.myUserName) { myInfo.userName = CONFIG.myUserName; }
+            CONFIG.listenMode = card.querySelector('#' + NS + 'cfg-listen-mode').value === 'self' ? 'self' : 'hub';
             CONFIG.enableMonitor = card.querySelector('#' + NS + 'cfg-monitor').checked;
             CONFIG.enableNotification = card.querySelector('#' + NS + 'cfg-notify').checked;
             CONFIG.enableAtMonitor = card.querySelector('#' + NS + 'cfg-at').checked;
@@ -1511,6 +1625,8 @@
             CONFIG.historyBackfill = Math.max(0, parseInt(card.querySelector('#' + NS + 'cfg-backfill').value, 10) || 0);
             saveConfigNow();
             applyAutoClean();
+            Watcher.applyListenMode();
+            updateModeBadge();
             if (mainPanel) {
                 const pauseBtn = mainPanel.querySelector('#' + NS + 'pause-btn');
                 const statusEl = mainPanel.querySelector('#' + NS + 'status');
@@ -1553,6 +1669,7 @@
         loadConfig();
         loadGroups();
         applyAutoClean();
+        initNotification();
         if (CONFIG.myUserName) myInfo.userName = CONFIG.myUserName;
         TokenStore.install();
         injectStyles();
