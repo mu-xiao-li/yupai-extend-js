@@ -2,7 +2,7 @@
 // @name         鱼排消息云·关键词监听（新版）
 // @namespace    https://fishpi.cn
 // @license      MIT
-// @version      2.0.3
+// @version      2.0.6
 // @description  新版聊天室关键词/指定用户/@我监听：消息云提醒、聚合记录、上下文追溯（由 message_listening v1.1.0 重构）
 // @author       muli 定制
 // @match        https://new.fishpi.cn/cr
@@ -14,6 +14,14 @@
 // @updateURL    https://raw.githubusercontent.com/mu-xiao-li/yupai-extend-js/main/fishpi_message_listening_plus.user.js
 // ==/UserScript==
 // 旧版（fishpi.cn/cr 旧聊天室）演进史见 message_listening.user.js（v1.0.0 ~ v1.1.0），旧文件冻结不动
+// 2026-11-27 v2.0.6 拼接引用第 2 轮反馈：作者位去时间（随官方引用卡格式，用户确认不要）；
+//   引用插入后光标落在首行、首行置一个换行——用户新发的消息排在引用块上方
+//   （站点渲染消息气泡本就在引用卡上方，编辑器所见即所得）
+// 2026-11-27 v2.0.5 快捷引用优化（消息不在 DOM 时的拼接引用改走官方引用格式）：
+//   拼接 markdown 复刻站点官方引用（`##### 引用 @作者 [↩](https://fishpi.cn/cr#chatroom<id> "跳转至原消息")` + `> 原文`），
+//   收信端渲染为原生引用卡（摘要/悬浮全文预览/尾部 ↩ 跳转）；作者位带 昵称（用户名）· 发送时间，
+//   其他人可见回复的是多久前的消息；↩ 点击走官方「查找消息附近前后消息上下文」路由
+//   （普通 md 尾链会整页跳到 fishpi.cn/cr 旧聊天室、不保证触发官方上下文，故必须随官方格式）
 // 2026-11-24 v2.0.3 真机反馈第 1 轮：总线模式后台通知兜底 + 消息体底色加重
 //   hub 后台保险：总线模式页面隐藏时自动开启独立采集（id 去重与总线互补），回到可见页面交还总线——
 //   真因：老版聊天室增强的 rAF 合批在后台冻结消息广播、5s 心跳却照发，hub 15s 静默回退被心跳掩盖，
@@ -48,7 +56,7 @@
     'use strict';
 
     // ================== 常量 ==================
-    const VERSION_US = 'v2.0.3';
+    const VERSION_US = 'v2.0.6';
     const API_BASE = 'https://fishpi.cn';
     const NS = 'mlp_';                  // 样式/节点命名空间
     const HUB_MSG_EVENT = 'fpcp:chat-msg';
@@ -67,7 +75,7 @@
     // HTML 转义（动态串进 innerHTML 前必过）
     function escapeHtml(s) {
         return String(s == null ? '' : s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/&/g, '&amp;').replace(/</g,   '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
@@ -154,6 +162,26 @@
         if (!days || days <= 0) return groups.slice();
         const cutoff = now - days * 86400000;
         return groups.filter(g => (g.latestTs || 0) >= cutoff);
+    }
+
+    // markdown 特殊字符转义（官方引用作者位同款字符集，收信端解析时反转义）
+    function escapeMd(s) {
+        return String(s == null ? '' : s).replace(/[\\`*_[\]<>!#|]/g, '\\$&');
+    }
+
+    // 拼接引用 → 官方引用 markdown（严格契约，收信端按官方解析器渲染成原生引用卡）：
+    //   （空首行 = 用户输入行/光标落点，新发消息排在引用块上方——站点渲染消息气泡本就在引用卡上方）
+    //   ##### 引用 @作者 [↩](https://fishpi.cn/cr#chatroom<id> "跳转至原消息")（行尾两个空格）
+    //   > 消息原文（多行以 ` > ` 续行）
+    //   作者位 = 昵称（用户名）；↩ 点击走官方「查找消息附近前后消息上下文」（标题/链接文案不可改，解析器强校验）
+    function buildQuoteMd(msg) {
+        const userName = String(msg.userName == null ? '' : msg.userName).trim();
+        const nickname = String(msg.nickname == null ? '' : msg.nickname).trim();
+        const who = nickname && nickname !== userName && !nickname.includes(userName) ? `${nickname}（${userName || '匿名'}）` : (nickname || userName || '匿名');
+        const author = escapeMd(who);
+        const text = String(msg.text == null ? '' : msg.text).replace(/\r\n?/g, ' ').replace(/\n/g, ' > ');
+        const href = 'https://fishpi.cn/cr#chatroom' + String(msg.id == null ? '' : msg.id).replace(/\D/g, '');
+        return `\n##### 引用 @${author} [↩](${href} "跳转至原消息")  \n> ${text}\n`;
     }
     // PURE-END
 
@@ -907,7 +935,7 @@
             || document.querySelector('.vditor-sv .vditor-reset[contenteditable="true"]');
     }
 
-    function insertToEditor(text) {
+    function insertToEditor(text, caretAtStart) {
         const ed = getEditorEl();
         if (!ed) return false;
         ed.focus();
@@ -917,7 +945,9 @@
             range.deleteContents();
             const node = document.createTextNode(text);
             range.insertNode(node);
-            range.setStartAfter(node);
+            // caretAtStart：光标落在插入内容首行（引用场景——用户输入行在引用块上方）
+            if (caretAtStart) range.setStart(node, 0);
+            else range.setStartAfter(node);
             range.collapse(true);
             sel.removeAllRanges();
             sel.addRange(range);
@@ -944,17 +974,15 @@
         setTimeout(() => el.classList.remove(NS + 'flash'), 2400);
     }
 
-    // N5 一键引用：DOM 存活触发原生引用按钮（格式最准），否则 md 引用块置入输入框
+    // N5 一键引用：DOM 存活触发原生引用按钮（格式最准），否则拼官方引用 markdown 置入输入框
+    //   （收信端渲染成原生引用卡：作者（含发送时间）/摘要/悬浮全文/尾部 ↩ 官方上下文跳转）
     function quoteMessage(msg) {
         const el = findLiveMsgEl(msg.id);
         if (el) {
             const btn = el.querySelector('button[title="引用消息"]');
             if (btn) { btn.click(); toast('已引用'); return; }
         }
-        const name = msg.nickname || msg.userName || '匿名';
-        const text = String(msg.text || '').slice(0, 200);
-        const quote = `> **${name}**：${text}\n\n`;
-        if (insertToEditor(quote)) toast('已引用');
+        if (insertToEditor(buildQuoteMd(msg), true)) toast('已引用');
         else toast('未找到输入框');
     }
 
